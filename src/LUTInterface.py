@@ -1,4 +1,4 @@
-from .BaseInterface import BaseInterface
+from .BaseInterface import BaseInterface, NET
 
 class LUTInterface(BaseInterface):
     def __init__(self):

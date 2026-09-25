@@ -1,0 +1,13 @@
+XOR:
+  1:
+    inputs:   {x1: 0, x2: 0}
+    outputs:  {y: 0}
+  2:
+    inputs:   {x1: 0, x2: 1}
+    outputs:  {y: 1}
+  3:
+    inputs:   {x1: 1, x2: 0}
+    outputs:  {y: 1}
+  4:
+    inputs:   {x1: 1, x2: 1}
+    outputs:  {y: 0}

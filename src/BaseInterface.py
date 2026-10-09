@@ -16,6 +16,10 @@ class ACTIV(Enum):
     kBinary     = "Binary"
     kBipolar    = "Bipolar"
 
+class LEARN(Enum):
+    kBatch     = "Batch"
+    kOnline    = "Online"
+
 class BaseInterface(ABC):
     @abstractmethod
     def __init__(self):

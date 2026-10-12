@@ -125,8 +125,8 @@ class NeuralNetwork(NNInterface):
         #     self._outputs = np.array([self.output])
 
     def halfTotalSquareError(self):
-        error = (self._outputs - self.expectedOutputs).T # vector subtraction
-        return 0.5 * np.dot(error, error)
+        error = np.subtract(self._outputs.ravel(), self.expectedOutputs.ravel()).T # vector subtraction
+        return 0.5 * np.dot(error,error)
 
     def backProp(self, target: float) -> list[np.ndarray]:
         # deltas[i] belongs to the neurons reached by self.weights[i].
@@ -195,6 +195,7 @@ class NeuralNetwork(NNInterface):
 
             # do forward propagation again
             predictions = []
+            self.expectedOutputs = np.array([])
             for ip,op in self.trainingSet["XOR"].items():
                 # set inputs and expected outputs
                 self.inputs = np.array(ip)  # set inputs
@@ -208,7 +209,7 @@ class NeuralNetwork(NNInterface):
             if error[-1] <= self._errorThresh or epoch >= maxEpoch:
                 break
 
-            epoch +=1
+            epoch += 1
         pass
         # loop through number of outputs
         # compute error

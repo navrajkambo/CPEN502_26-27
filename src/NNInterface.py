@@ -7,7 +7,7 @@ class NNInterface(BaseInterface):
         def __init__(self, activation: ACTIV = ACTIV.kBinary):
             self.activation = activation
 
-        def function(self, x: np.array) -> float:
+        def function(self, x: np.ndarray) -> float:
             if self.activation == ACTIV.kBinary:
                 return self.binary_sigmoid(x)
             elif self.activation == ACTIV.kBipolar:
@@ -41,12 +41,12 @@ class NNInterface(BaseInterface):
         self._errorThresh: float = 0.05
         self.activation: NNInterface.Activation
 
-        self.input:     np.array
-        self.nodes:     np.array
-        self.weights:   list[np.array]
+        self.inputs:     np.ndarray
+        self.nodes:     np.ndarray
+        self.weights:   list[np.ndarray]
         self.weightedSum: list[float]
 
-        self.outputs: np.array
+        self.outputs: np.ndarray
 
     def initWeights(self, initialWeightRange) -> None:
         pass
@@ -59,7 +59,7 @@ class NNInterface(BaseInterface):
 class NeuralNetwork(NNInterface):
     def __init__(self, inputs: int = 2, hiddenNodes: list[int] | None = [4, 4], outputs: int = 1,
                  learningRate: float = 0.2, momentum: float = 0.0,
-                 activFunc: ACTIV = ACTIV.kBinary, learnMode: LEARN = LEARN.kOnline, initialWeightRange: tuple[float, float] = (-0.5, 0.5)):
+                 activFunc: ACTIV = ACTIV.kBinary, learnMode: LEARN = LEARN.kOnline, initialWeightRange: tuple[float, float] = (-0.5, 0.5), maxEpoch: int = 10000):
         super().__init__()
 
         if inputs < 2 or outputs < 1 or hiddenNodes is None or len(hiddenNodes) < 1:
@@ -71,11 +71,12 @@ class NeuralNetwork(NNInterface):
         self.learningMode = learnMode
         self.rng = np.random.default_rng(4)
         self._errorThresh = 0.05
+        self._maxEpoch = maxEpoch
 
         self._layerSizes = [inputs, *hiddenNodes, outputs]
         self._outputs = np.array([])
 
-        self.input = np.zeros(inputs)
+        self.inputs = np.zeros(inputs)
         self.nodes = [np.zeros(n) for n in hiddenNodes]
         self.output = np.zeros(outputs)
 
@@ -112,7 +113,7 @@ class NeuralNetwork(NNInterface):
                 break
 
             if index == 0:
-                self.weightedSums.append(np.matmul(layer.T, np.append(self.input, 1)))
+                self.weightedSums.append(np.matmul(layer.T, np.append(self.inputs, 1)))
                 self.nodes[index] = self.activation.function(self.weightedSums[-1])
             else:
                 self.weightedSums.append(np.matmul(layer.T, (np.append(self.nodes[index - 1], 1))))
@@ -152,7 +153,7 @@ class NeuralNetwork(NNInterface):
         changes : list[np.ndarray] = []
         for layer, weights in (enumerate(self.weights)):
             # add bias row back into inputs
-            previous_input = np.append(self.input if layer == 0 else self.nodes[layer-1], 1.0)
+            previous_input = np.append(self.inputs if layer == 0 else self.nodes[layer-1], 1.0)
 
             # use outer product (mat mul) to get weight matrix size correct and scalar mult by learning rate
             changes.append(self.learningRate * np.outer(previous_input, deltas[layer]))
@@ -166,7 +167,6 @@ class NeuralNetwork(NNInterface):
     def trainModel(self):
         self.loadTrainingSet()
 
-        maxEpoch = 10000
         epoch = 0
         error: list[float] = []
 
@@ -206,18 +206,28 @@ class NeuralNetwork(NNInterface):
             self._outputs = np.asarray(predictions)
             error.append(self.halfTotalSquareError())
 
-            if error[-1] <= self._errorThresh or epoch >= maxEpoch:
+            if error[-1] <= self._errorThresh or epoch >= self._maxEpoch:
                 break
 
             epoch += 1
-        pass
+
+        print(f"Reached {epoch} training iterations and achieved {error[-1]} error")
+        self.plotGraph(error)
+        self.plotNetwork()
+        self.showPlots()
+
+        option = input("Save weights? [Y/n]")
+        if option == "Y" or option == "y":
+            filename = input("Enter file name: ")
+            self.saveWeights(filename)
+            print(f"{filename}.nnw saved, exiting...")
+        elif option == "N" or option == "n":
+            print("Training finished, exiting...")
+        else:
+            print("Invalid option, exiting...")
         # loop through number of outputs
         # compute error
 
-    def saveWeights(self):
-        pass
 
-    def loadWeights(self):
-        pass
 
 

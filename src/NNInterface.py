@@ -40,6 +40,7 @@ class NeuralNetwork(NNInterface):
 
         self._layerSizes = [inputs, *hiddenNodes, outputs]
         self._outputs = np.array([])
+        self._lastWeights: list[np.ndarray]
 
         self.inputs = np.zeros(inputs)
         self.nodes = [np.zeros(n) for n in hiddenNodes]
@@ -60,12 +61,12 @@ class NeuralNetwork(NNInterface):
             self.rng.uniform(low, high, size=(n_in + 1, n_out))
             for n_in, n_out in zip(self._layerSizes[:-1], self._layerSizes[1:])
         ]
-        self.previousUpdates = [np.zeros_like(w) for w in self.weights]
+        self._lastWeights = [w.copy() for w in self.weights]
 
     def zeroWeights(self) -> None:
         for w in self.weights:
             w.fill(0.0)
-        for update in self.previousUpdates:
+        for update in self._lastWeights:
             update.fill(0.0)
 
     def fwdProp(self) -> float:
@@ -146,10 +147,18 @@ class NeuralNetwork(NNInterface):
             previous_with_bias = np.append(previous_output, 1.0)
 
             # Includes the bias-weight update in the final row.
-            self.weights[layer] += self.learningRate * np.outer(previous_with_bias, delta)
+            change = self.learningRate * np.outer(previous_with_bias, delta)
+            self.updateWeights(layer, change)
 
-    def updateWeights(self):
-        pass
+    def updateWeights(self, layer: int, change: np.ndarray) -> None:
+        current = self.weights[layer]
+        previous_update = current - self._lastWeights[layer]
+
+        update = change + self.momentum * previous_update
+
+        # Save the pre-update weights. A copy prevents shared-array problems.
+        self._lastWeights[layer] = current.copy()
+        current += update
 
     def trainModel(self, sequentialUpdates: bool = False, plot: bool = True, interactive: bool = False) -> tuple[bool, list[float]]:
         self.loadTrainingSet()
@@ -177,11 +186,18 @@ class NeuralNetwork(NNInterface):
                     self.backPropSequential(target=op)
                 else:
                     # do back propagation step
-                    avg_change.append(self.backProp(target=op))
-                    self.weights = [w + dw for w, dw in zip(self.weights, avg_change.pop())]
+                    changes = self.backProp(target=op)
+                    if self.learningMode == LEARN.kOnline:
+                        for layer, change in enumerate(changes):
+                            self.updateWeights(layer, change)
+                    else:
+                        avg_change.append(changes)
+                    # self.weights = [w + dw for w, dw in zip(self.weights, avg_change.pop())]
 
             if self.learningMode == LEARN.kBatch:
-                self.weights = [w + dw for w, dw in zip(self.weights, [np.mean(change, axis=0) for change in zip(*avg_change)])]
+                for layer, layer_changes in enumerate(zip(*avg_change)):
+                    change = np.mean(layer_changes, axis=0)
+                    self.updateWeights(layer, change)
 
             # do forward propagation again
             predictions = []

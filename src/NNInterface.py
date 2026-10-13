@@ -127,13 +127,37 @@ class NeuralNetwork(NNInterface):
         # return changes to be applied later (depending on online or batch mode)
         return changes
 
+    def backPropSequential(self, target: float) -> None:
+        # Reconstruct the current output from the saved forward-pass sum.
+        output = self.activation.function(self.weightedSums[-1])
+        target = np.asarray(target, dtype=float).reshape(-1)
+
+        delta = (target - output)* self.activation.derivative(self.weightedSums[-1])
+
+        # Update the output layer first, then move toward the input.
+        for layer in range(len(self.weights) - 1, -1, -1):
+            if layer < len(self.weights) - 1:
+                # The next layer's weights have ALREADY been updated.
+                next_weights = self.weights[layer + 1][:-1, :]
+                delta = (next_weights @ delta) * self.activation.derivative(self.weightedSums[layer])
+
+            previous_output = self.inputs if layer == 0 else self.nodes[layer - 1]
+
+            previous_with_bias = np.append(previous_output, 1.0)
+
+            # Includes the bias-weight update in the final row.
+            self.weights[layer] += self.learningRate * np.outer(previous_with_bias, delta)
+
     def updateWeights(self):
         pass
 
-    def trainModel(self, plot: bool = True, interactive: bool = False) -> tuple[bool, list[float]]:
+    def trainModel(self, sequentialUpdates: bool = False, plot: bool = True, interactive: bool = False) -> tuple[bool, list[float]]:
         self.loadTrainingSet()
         error: list[float] = []
         success = False
+
+        if sequentialUpdates and self.learningMode != LEARN.kOnline:
+            raise ValueError("Sequential layer updates require online mode")
 
         for epoch in range(1, self._maxEpoch + 1):
             self.expectedOutputs = np.array([])
@@ -148,11 +172,12 @@ class NeuralNetwork(NNInterface):
                 self._outputs = np.append(self._outputs, self.fwdProp())
                 d = self.halfTotalSquareError()
 
-                # do back propagation step
-                avg_change.append(self.backProp(target=op))
-
                 # apply back propagation to online learning mode
-                if self.learningMode == LEARN.kOnline:
+                if sequentialUpdates:
+                    self.backPropSequential(target=op)
+                else:
+                    # do back propagation step
+                    avg_change.append(self.backProp(target=op))
                     self.weights = [w + dw for w, dw in zip(self.weights, avg_change.pop())]
 
             if self.learningMode == LEARN.kBatch:
@@ -211,7 +236,7 @@ class NeuralNetwork(NNInterface):
             self.rng = np.random.default_rng(trial_seed)
             self.initWeights(self.initialWeightRange)
 
-            success, loss = self.trainModel(plot = False, interactive = False)
+            success, loss = self.trainModel(sequentialUpdates = True, plot = False, interactive = False)
             print(f"Trained model {i}")
             if success:
                 epochs.append(len(loss))

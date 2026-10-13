@@ -251,8 +251,8 @@ class NeuralNetwork(NNInterface):
             # Start a fresh model, including zeroed momentum history.
             self.rng = np.random.default_rng(trial_seed)
             self.initWeights(self.initialWeightRange)
-
-            success, loss = self.trainModel(sequentialUpdates = True, plot = False, interactive = False)
+            seq = (self.learningMode == LEARN.kOnline)
+            success, loss = self.trainModel(sequentialUpdates = seq, plot = False, interactive = False)
             print(f"Trained model {i}")
             if success:
                 epochs.append(len(loss))

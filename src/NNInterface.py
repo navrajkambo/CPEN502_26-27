@@ -48,6 +48,7 @@ class NeuralNetwork(NNInterface):
         # Example: [2, 4, 4, 1] means input -> hidden -> hidden -> output.
 
         self.weightedSum: list
+        self.initialWeightRange = initialWeightRange
         self.initWeights(initialWeightRange)
 
     def initWeights(self, initialWeightRange: tuple[float, float]) -> None:
@@ -129,13 +130,12 @@ class NeuralNetwork(NNInterface):
     def updateWeights(self):
         pass
 
-    def trainModel(self):
+    def trainModel(self, plot: bool = True, interactive: bool = False) -> tuple[bool, list[float]]:
         self.loadTrainingSet()
-
-        epoch = 0
         error: list[float] = []
+        success = False
 
-        while True:
+        for epoch in range(1, self._maxEpoch + 1):
             self.expectedOutputs = np.array([])
             self._outputs = np.array([])
             avg_change = []
@@ -171,27 +171,72 @@ class NeuralNetwork(NNInterface):
             self._outputs = np.asarray(predictions)
             error.append(self.halfTotalSquareError())
 
-            if error[-1] <= self._errorThresh or epoch >= self._maxEpoch:
+            if error[-1] <= self._errorThresh:
+                success = True
                 break
 
-            epoch += 1
+        if interactive:
+            print(f"Reached {epoch} training iterations and achieved {error[-1]} error")
+        if plot:
+            self.plotGraph(error)
+            self.plotNetwork()
+            self.showPlots()
+        if interactive:
+            option = input("Save weights? [Y/n]")
+            if option == "Y" or option == "y":
+                filename = input("Enter file name: ")
+                self.saveWeights(filename)
+                print(f"{filename}.nnw saved, exiting...")
+            elif option == "N" or option == "n":
+                print("Training finished, exiting...")
+            else:
+                print("Invalid option, exiting...")
 
-        print(f"Reached {epoch} training iterations and achieved {error[-1]} error")
-        self.plotGraph(error)
-        self.plotNetwork()
-        self.showPlots()
+        return (success, error)
 
-        option = input("Save weights? [Y/n]")
-        if option == "Y" or option == "y":
-            filename = input("Enter file name: ")
-            self.saveWeights(filename)
-            print(f"{filename}.nnw saved, exiting...")
-        elif option == "N" or option == "n":
-            print("Training finished, exiting...")
-        else:
-            print("Invalid option, exiting...")
-        # loop through number of outputs
-        # compute error
+    def avgTrain(self, trials: int = 100, plot: bool = True, seed: int | None = None):
+        if trials < 1:
+            raise ValueError("trials must be at least 1")
+
+        # Optional seed makes the whole experiment repeatable.
+        experiment_rng = np.random.default_rng(seed)
+        epochs = []
+        trial_seeds = []
+
+        for i in range(trials):
+            trial_seed = int(experiment_rng.integers(0, 2 ** 32))
+            trial_seeds.append(trial_seed)
+
+            # Start a fresh model, including zeroed momentum history.
+            self.rng = np.random.default_rng(trial_seed)
+            self.initWeights(self.initialWeightRange)
+
+            success, loss = self.trainModel(plot = False, interactive = False)
+            print(f"Trained model {i}")
+            if success:
+                epochs.append(len(loss))
+
+
+        epochs = np.asarray(epochs, dtype=int)
+        successes = len(epochs)
+        failures = trials - successes
+
+        mean = float(np.mean(epochs)) if successes else float("nan")
+        sd = float(np.std(epochs, ddof=1)) if successes > 1 else float("nan")
+
+        if plot:
+            self.plotStatistics(epochs, successes, failures, epochs, mean, sd)
+
+        return {
+            "epochs": epochs,
+            "mean": mean,
+            "sd": sd,
+            "successes": successes,
+            "failures": failures,
+            "seeds": trial_seeds,
+        }
+
+
 
 
 

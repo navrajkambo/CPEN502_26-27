@@ -251,6 +251,62 @@ class BaseInterface(ABC):
 
         return fig, ax
 
+    def plotStatistics(self, trials, successes, failures, epochs, mean, sd,):
+
+        plt.close("all")
+        fig, ax = plt.subplots(figsize=(9, 5))
+
+        if successes:
+            ax.hist(
+                epochs,
+                bins="auto",
+                color="steelblue",
+                edgecolor="white",
+                alpha=0.8,
+            )
+
+            ax.axvline(
+                mean, color="black", linewidth=2,
+                label=f"Mean: {mean:.1f}",
+            )
+
+            if successes > 1:
+                for position in (mean - sd, mean + sd):
+                    ax.axvline(
+                        position, color="darkorange",
+                        linestyle="--", linewidth=1.5,
+                    )
+                # Legend entry for the two dashed lines.
+                ax.plot(
+                    [], [], color="darkorange", linestyle="--",
+                    label=f"Mean ± SD: {sd:.1f}",
+                )
+
+            ax.legend(loc="upper right")
+
+        mean_text = f"{mean:.1f}" if successes else "N/A"
+        sd_text = f"{sd:.1f}" if successes > 1 else "N/A"
+
+        ax.text(
+            0.02, 0.97,
+            f"Successful runs: {successes}/{trials}\n"
+            f"Failed runs: {failures}\n"
+            f"Mean epochs: {mean_text}\n"
+            f"Sample SD: {sd_text}",
+            transform=ax.transAxes,
+            va="top",
+            bbox=dict(facecolor="white", edgecolor="gray", alpha=0.9),
+        )
+
+        ax.set(
+            xlabel="Completed epochs until convergence",
+            ylabel="Number of runs",
+            title="XOR convergence across random initializations",
+        )
+        ax.grid(axis="y", alpha=0.25)
+        fig.tight_layout()
+        plt.show()
+
     def showPlots(self):
         plt.show()
     # @abstractmethod

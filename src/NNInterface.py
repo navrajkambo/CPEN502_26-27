@@ -3,43 +3,10 @@ import numpy as np
 import math
 
 class NNInterface(BaseInterface):
-    class Activation():
-        def __init__(self, activation: ACTIV = ACTIV.kBinary):
-            self.activation = activation
-
-        def function(self, x: np.ndarray) -> float:
-            if self.activation == ACTIV.kBinary:
-                return self.binary_sigmoid(x)
-            elif self.activation == ACTIV.kBipolar:
-                return self.bipolar_sigmoid(x)
-            else:
-                raise ValueError(f"Unknown activation function: {self.activation}")
-
-        def derivative(self, x) -> float:
-            if self.activation == ACTIV.kBinary:
-                return self.deriv_binary_sigmoid(x)
-            elif self.activation == ACTIV.kBipolar:
-                return self.deriv_bipolar_sigmoid(x)
-            else:
-                raise ValueError(f"Unknown activation function: {self.activation}")
-
-        def bipolar_sigmoid(self, x: np.ndarray | float) -> np.ndarray | float:
-            return 2 / (1 + np.exp(-x)) - 1
-
-        def deriv_bipolar_sigmoid(self, x: np.ndarray | float) -> np.ndarray | float:
-            return 0.5 * (1 - (self.bipolar_sigmoid(x) ** 2))
-
-        def binary_sigmoid(self, x: np.ndarray | float) -> np.ndarray | float:
-            return 1 / (1 + np.exp(-x))
-
-        def deriv_binary_sigmoid(self, x: np.ndarray | float) -> np.ndarray | float:
-            return self.binary_sigmoid(x) * (1 - self.binary_sigmoid(x))
-
-
     def __init__(self):
         super().__init__()
         self._errorThresh: float = 0.05
-        self.activation: NNInterface.Activation
+
 
         self.inputs:     np.ndarray
         self.nodes:     np.ndarray
@@ -53,8 +20,6 @@ class NNInterface(BaseInterface):
 
     def zeroWeights(self):
         pass
-
-
 
 class NeuralNetwork(NNInterface):
     def __init__(self, inputs: int = 2, hiddenNodes: list[int] | None = [4, 4], outputs: int = 1,

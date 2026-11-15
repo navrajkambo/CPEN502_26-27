@@ -1,0 +1,16 @@
+{
+  "name": "Tracker",
+  "version": "1.0",
+  "authors": [
+    "Mathew A. Nelson",
+    "Flemming N. Larsen",
+    "CoPilot"
+  ],
+  "description": "Locks onto a robot, moves close, fires when close.",
+  "homepage": "",
+  "countryCodes": [
+    "us"
+  ],
+  "platform": "Python",
+  "programmingLang": "Python 3"
+}

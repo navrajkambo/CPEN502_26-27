@@ -166,7 +166,7 @@ class CapPeeler(Bot):
         del e
 
 def main() -> None:
-    bot = Tracker()
+    bot = CapPeeler()
     bot.start()
 
 

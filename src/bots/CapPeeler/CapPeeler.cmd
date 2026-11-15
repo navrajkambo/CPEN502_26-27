@@ -1,2 +1,2 @@
 @echo off
-python Tracker.py %*
+python CapPeeler.py %*

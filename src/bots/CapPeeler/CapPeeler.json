@@ -1,0 +1,15 @@
+{
+  "name": "CapPeeler",
+  "version": "1.0",
+  "authors": [
+    "Navraj S. Kambo",
+    "CoPilot"
+  ],
+  "description": "21 gun salute from this tank, fires all the time.",
+  "homepage": "",
+  "countryCodes": [
+    "ca"
+  ],
+  "platform": "Python",
+  "programmingLang": "Python 3"
+}

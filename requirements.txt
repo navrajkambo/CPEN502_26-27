@@ -1,0 +1,5 @@
+numpy
+matplotlib
+pandas
+pyarrow
+robocode-tank-royale==1.4.0

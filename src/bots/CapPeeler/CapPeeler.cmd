@@ -1,2 +1,7 @@
 @echo off
-python CapPeeler.py %*
+cd /d "%~dp0"
+if exist "..\..\..\.venv\Scripts\python.exe" (
+    "..\..\..\.venv\Scripts\python.exe" CapPeeler.py %*
+) else (
+    python CapPeeler.py %*
+)

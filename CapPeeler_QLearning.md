@@ -1,5 +1,23 @@
 # CapPeeler Q-learning
 
+After the configured rounds finish, a plot window opens automatically with
+round reward, average reward and win rate over the last 50 rounds, and epsilon
+against completed training rounds. Early averages use the available rounds.
+The figure includes the full saved training history and is also saved as
+`training/cappeeler.png` (or beside your custom CSV). These are training results
+including exploration, rather than separate zero-epsilon evaluation results.
+The epsilon curve shows the recorded value after each round.
+
+To view the plot later without running a battle, use this command from the
+repository root:
+
+    .venv/Scripts/python.exe src/plot_learning.py --show
+
+Use `--window 100` to change the averaging window, or pass a custom CSV filename.
+`LUTInterface.plotLearningPerformance(filename, window=50, show=False)` saves the
+figure and returns `(figure, axes)` for use from Python. The bot launches the
+viewer in a separate process at game end so the plot does not block bot events.
+
 CapPeeler trains automatically while fighting. Add `src/bots` as a bot directory
 in Tank Royale, select CapPeeler and an opponent (start with Tracker), and run a
 battle with many rounds. Install the root requirements into `.venv` first; the

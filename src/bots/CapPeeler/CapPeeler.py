@@ -3,6 +3,7 @@ import csv
 import os
 from pathlib import Path
 import sys
+import subprocess
 
 # robocode launches this file from the bot directory.
 SOURCE_DIR = Path(__file__).resolve().parents[2]
@@ -154,6 +155,20 @@ class CapPeeler(Bot):
 
     def on_game_ended(self, event):
         self._finish_episode()
+        self._plot_performance()
+
+    def _plot_performance(self):
+        if (not self.training or not self.metrics_path.exists()
+                or getattr(self, "_plotted_episode", None) == self.qtable.episodes):
+            return
+        # A separate process keeps the plotting GUI on its own main thread and
+        # leaves the bot free to receive future game/server events.
+        subprocess.Popen(
+            [sys.executable, str(SOURCE_DIR / "plot_learning.py"),
+             str(self.metrics_path.resolve()), "--show"],
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        self._plotted_episode = self.qtable.episodes
 
     def on_game_aborted(self, event):
         self._finish_episode()

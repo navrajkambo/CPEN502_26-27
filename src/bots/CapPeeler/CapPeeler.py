@@ -9,12 +9,11 @@ import subprocess
 SOURCE_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE_DIR))
 
-from LUTInterface import LUTInterface
-from CapPeelerRL import Action, encode_state
+from LUTInterface import LUTInterface, Action, encode_state
 from robocode_tank_royale.bot_api import Color
 from robocode_tank_royale.bot_api.bot import Bot
 # from robocode_tank_royale.bot_api.bot_info import BotInfo
-from robocode_tank_royale.bot_api.events import TickEvent
+from robocode_tank_royale.bot_api.events import TickEvent, ScannedBotEvent, HitBotEvent, WonRoundEvent, RoundEndedEvent, DeathEvent
 
 
 class CapPeeler(Bot):
@@ -58,9 +57,9 @@ class CapPeeler(Bot):
         self.adjust_radar_for_body_turn = True
         self.adjust_radar_for_gun_turn = True
         while self.running:
-            self.go() # go() dispatches callbacks; callbacks only set nonblocking commands.
+            self.go() # this is a baseclass inherited method, dispatches callbacks (nonblocking commands only)
 
-    def on_scanned_bot(self, event):
+    def on_scanned_bot(self, event: ScannedBotEvent):
         if self._outcome is not None or self._finished or self._round_end is not None:
             return
         if (self._target is None or event.scanned_bot_id == self._target[0]

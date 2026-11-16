@@ -31,13 +31,13 @@ class CapPeeler(Bot):
     def run(self) -> None:
         """Tracker's main run function."""
         # Set colors
-        red = Color.from_rgb(0xFF, 0x00, 0x00)
+        purple = Color.from_rgb(0xFF, 0x00, 0xFF)
         white = Color.from_rgb(0xFF, 0xFF, 0xFF)
-        self.body_color = red
+        self.body_color = purple
         self.turret_color = white
         self.radar_color = Color.from_rgb(200, 200, 70)
-        self.scan_color = Color.from_rgb(255, 255, 255)
-        self.bullet_color = Color.from_rgb(0, 0, 255)
+        self.scan_color = Color.from_rgb(255, 127, 255)
+        self.bullet_color = Color.from_rgb(0, 255, 0)
 
         # Prepare gun
         self._track_id = None  # Initialize to not tracking anyone
@@ -114,6 +114,9 @@ class CapPeeler(Bot):
                 # If we *still* haven't seen our target after 10 turns, find another target
                 if self._count > 11:
                     self._track_id = None
+
+    def shoot(self, FirePower: int = 1):
+        self.fire(FirePower)
 
     def on_scanned_bot(self, e: ScannedBotEvent) -> None:
         """Here's the good stuff - store scanned bot data for main loop to process."""

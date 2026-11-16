@@ -5,7 +5,7 @@ from fileinput import filename
 
 import matplotlib.pyplot as plt
 import numpy as np
-import yaml
+
 
 class NET(Enum):
     IP = "Input Layer"
@@ -22,7 +22,7 @@ class LEARN(Enum):
     kOnline    = "Online"
 
 class BaseInterface(ABC):
-    class Activation():
+    class Activation:
         def __init__(self, activation: ACTIV = ACTIV.kBinary):
             self.activation = activation
 
@@ -57,81 +57,15 @@ class BaseInterface(ABC):
 
     @abstractmethod
     def __init__(self):
-        self.weights: list[np.ndarray]
+        pass
 
-        self._layerSizes: list[int]
-        self._outputs: np.ndarray
-
-        self.inputs: np.ndarray
-        self.nodes: list[np.ndarray]
-        self.output: np.ndarray
-
-        self.activation: BaseInterface.Activation
-
-    def loadTrainingSet(self) -> None:
-        if self.activation.activation == ACTIV.kBinary:
-            filename = "BinaryTrainingSet.yaml"
-        elif self.activation.activation == ACTIV.kBipolar:
-            filename = "BipolarTrainingSet.yaml"
-        else:
-            raise ValueError(f"Unknown activation function: {self.activation.activation}")
-
-        with open(filename, encoding="utf-8") as file:
-            data = yaml.safe_load(file)
-
-        self.trainingSet = {}
-
-        for gate_name, rows in data.items():
-            self.trainingSet[gate_name] = {
-                (row["inputs"]["x1"], row["inputs"]["x2"]): row["outputs"]["y"]
-                for row in rows.values()
-            }
-
+    @abstractmethod
     def saveWeights(self, filename: str = "weights.npz") -> None:
-        data = {
-            "layerSizes": np.asarray(self._layerSizes, dtype=int),
-            **{
-                f"weight_{i}": weights
-                for i, weights in enumerate(self.weights)
-            },
-        }
+        pass
 
-        # Opening the file explicitly preserves the exact filename.
-        with open("weights/"+filename+".nnw", "wb") as file:
-            np.savez_compressed(file, **data)
-
+    @abstractmethod
     def loadWeights(self, filename: str = "weights.npz") -> None:
-        with np.load(filename, allow_pickle=False) as data:
-            saved_sizes = data["layerSizes"].tolist()
-
-            if saved_sizes != self._layerSizes:
-                raise ValueError(
-                    f"Saved architecture {saved_sizes} does not match "
-                    f"this network's architecture {self._layerSizes}"
-                )
-
-            loaded_weights = []
-
-            for i, (n_in, n_out) in enumerate(
-                    zip(self._layerSizes[:-1], self._layerSizes[1:])
-            ):
-                weights = np.array(data[f"weight_{i}"], dtype=float, copy=True)
-                expected_shape = (n_in + 1, n_out)
-
-                if weights.shape != expected_shape:
-                    raise ValueError(
-                        f"Weight {i} has shape {weights.shape}; "
-                        f"expected {expected_shape}"
-                    )
-
-                if not np.all(np.isfinite(weights)):
-                    raise ValueError(f"Weight {i} contains invalid values")
-
-                loaded_weights.append(weights)
-
-        # Replace existing weights only after all matrices pass validation.
-        self.weights = loaded_weights
-        self.previousUpdates = [np.zeros_like(w) for w in self.weights]
+        pass
 
     def plotGraph(self, error_history: list[float]):
         # error_history: list[float], one value per completed epoch

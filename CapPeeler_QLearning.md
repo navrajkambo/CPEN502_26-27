@@ -14,7 +14,7 @@ Terminal transitions use reward alone. Defaults: alpha=0.1, gamma=0.95,
 epsilon=1.0, decaying by 0.995 each completed round to a minimum of 0.05.
 Greedy action selection breaks ties randomly.
 
-`src/QTable.py` implements learning and persistence. `CapPeelerRL.py` defines the
+`src/LUTInterface.py` implements Q-learning and the abstract `BaseInterface` methods `saveWeights` and `loadWeights`. These persist Q-values, epsilon and episode count in the existing `.npz` format. `CapPeelerRL.py` defines the
 encoder and six actions. `bots/CapPeeler/CapPeeler.py` is my robot.
 The existing neural-network interfaces from assignment #1 are independent and unchanged.
 

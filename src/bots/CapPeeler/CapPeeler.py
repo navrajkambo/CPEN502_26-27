@@ -8,7 +8,7 @@ import sys
 SOURCE_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE_DIR))
 
-from QTable import QTable
+from LUTInterface import LUTInterface
 from CapPeelerRL import Action, encode_state
 from robocode_tank_royale.bot_api import Color
 from robocode_tank_royale.bot_api.bot import Bot
@@ -23,12 +23,11 @@ class CapPeeler(Bot):
     def __init__(self):
         super().__init__()
         self.training = os.getenv("CAPPEELER_TRAINING", "1") != "0"
-        self.table_path = Path(os.getenv("CAPPEELER_QTABLE",
-                                         str(SOURCE_DIR.parent / "training" / "cappeeler.npz")))
+        self.table_path = Path(os.getenv("CAPPEELER_QTABLE", str(SOURCE_DIR.parent / "training" / "cappeeler.npz")))
         self.metrics_path = self.table_path.with_suffix(".csv")
-        self.qtable = QTable()
+        self.qtable = LUTInterface()
         if self.table_path.exists():
-            self.qtable.load(self.table_path)
+            self.qtable.loadWeights(self.table_path)
         elif not self.training:
             raise FileNotFoundError(f"Train a table before evaluation: {self.table_path}")
         # Process scans, damage and death before each learning decision.
@@ -52,14 +51,13 @@ class CapPeeler(Bot):
         self._reset_episode()
 
     def run(self):
-        self.body_color = Color.from_rgb(255, 0, 255)
+        self.body_color = Color.from_rgb(255, 0, 255) # purple
         self.turret_color = Color.from_rgb(255, 255, 255)
         self.adjust_gun_for_body_turn = True
         self.adjust_radar_for_body_turn = True
         self.adjust_radar_for_gun_turn = True
         while self.running:
-            # go() dispatches callbacks; callbacks only set nonblocking commands.
-            self.go()
+            self.go() # go() dispatches callbacks; callbacks only set nonblocking commands.
 
     def on_scanned_bot(self, event):
         if self._outcome is not None or self._finished or self._round_end is not None:
@@ -152,8 +150,7 @@ class CapPeeler(Bot):
             self._add_reward(100)
 
     def on_round_ended(self, event):
-        # API 1.4.0 flushes final events AFTER this callback returns.
-        self._round_end = event
+        self._round_end = event # API 1.4.0 flushes final events AFTER this callback returns.
 
     def on_game_ended(self, event):
         self._finish_episode()
@@ -172,7 +169,7 @@ class CapPeeler(Bot):
         if self.training:
             self.qtable.episodes += 1
             self.qtable.decay_epsilon()
-            self.qtable.save(self.table_path)
+            self.qtable.saveWeights(self.table_path)
             self.metrics_path.parent.mkdir(parents=True, exist_ok=True)
             header = not self.metrics_path.exists()
             with self.metrics_path.open("a", newline="", encoding="utf-8") as stream:

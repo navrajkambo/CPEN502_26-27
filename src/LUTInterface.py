@@ -63,7 +63,7 @@ class LUTInterface(BaseInterface):
 
     def update(self, state: State, action: Action | int, reward: float, next_state: State | None = None, done: bool = False) -> float:
         if not done and next_state is None:
-            raise ValueError("next_state is required for a nonterminal update")
+            raise ValueError("next_state is required for a non-terminal update")
         index = state.to_tuple() + (action,) # append action to end of state tuple
         current = self.Q[index] # search Q-table
         target = reward if done else reward + self.gamma * self.Q[next_state.to_tuple()].max()

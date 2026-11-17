@@ -129,7 +129,7 @@ class CapPeeler(Bot):
             if abs(self.gun_bearing_to(x, y)) <= 10 and self.energy > 3:
                 self.set_fire(3)
 
-    def _add_reward(self, reward):
+    def _add_reward(self, reward: int):
         if not self._finished:
             self._total_reward += reward
             if self._state is not None:

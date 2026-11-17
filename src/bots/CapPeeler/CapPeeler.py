@@ -13,7 +13,20 @@ from LUTInterface import LUTInterface, Action, encode_state
 from robocode_tank_royale.bot_api import Color
 from robocode_tank_royale.bot_api.bot import Bot
 # from robocode_tank_royale.bot_api.bot_info import BotInfo
-from robocode_tank_royale.bot_api.events import TickEvent, ScannedBotEvent, HitBotEvent, WonRoundEvent, RoundEndedEvent, DeathEvent
+from robocode_tank_royale.bot_api.events import (
+    BotDeathEvent,
+    BulletHitBotEvent,
+    DeathEvent,
+    GameEndedEvent,
+    HitBotEvent,
+    HitByBulletEvent,
+    HitWallEvent,
+    RoundEndedEvent,
+    RoundStartedEvent,
+    ScannedBotEvent,
+    TickEvent,
+    WonRoundEvent,
+)
 
 
 class CapPeeler(Bot):
@@ -46,7 +59,7 @@ class CapPeeler(Bot):
         self._finished = False
         self._round_end = None
 
-    def on_round_started(self, event):
+    def on_round_started(self, e: RoundStartedEvent) -> None:
         self._finish_episode()
         self._reset_episode()
 
@@ -59,20 +72,20 @@ class CapPeeler(Bot):
         while self.running:
             self.go() # this is a baseclass inherited method, dispatches callbacks (nonblocking commands only)
 
-    def on_scanned_bot(self, event: ScannedBotEvent):
+    def on_scanned_bot(self, e: ScannedBotEvent) -> None:
         if self._outcome is not None or self._finished or self._round_end is not None:
             return
-        if (self._target is None or event.scanned_bot_id == self._target[0]
-                or event.turn_number - self._target[4] > self.TARGET_TIMEOUT):
-            self._target = (event.scanned_bot_id, event.x, event.y,
-                            event.energy, event.turn_number)
+        if (self._target is None or e.scanned_bot_id == self._target[0]
+                or e.turn_number - self._target[4] > self.TARGET_TIMEOUT):
+            self._target = (e.scanned_bot_id, e.x, e.y,
+                            e.energy, e.turn_number)
 
     def _observation(self):
         _, x, y, energy, _ = self._target
         return encode_state(self.distance_to(x, y), self.bearing_to(x, y),
                             self.energy, energy)
 
-    def on_tick(self, event):
+    def on_tick(self, e: TickEvent) -> None:
         if self._outcome is not None or self._finished or self._round_end is not None:
             return
         self.radar_turn_rate = 45
@@ -82,16 +95,16 @@ class CapPeeler(Bot):
             self.set_fire(0)
             return
         state = self._observation()
-        if self._state is None or event.turn_number - self._action_turn >= self.ACTION_TICKS:
+        if self._state is None or e.turn_number - self._action_turn >= self.ACTION_TICKS:
             if self._state is not None:
                 if self.training:
                     self.qtable.update(self._state, self._action, self._reward, state)
             self._reward = 0.0
             self._state = state
             self._action = self.qtable.choose_action(state, explore=self.training)
-            self._action_turn = event.turn_number
+            self._action_turn = e.turn_number
             self._steps += 1
-        self._execute_action(event.turn_number)
+        self._execute_action(e.turn_number)
 
     def _execute_action(self, turn):
         # Reset previous commands so actions do not leak into the next interval.
@@ -122,37 +135,37 @@ class CapPeeler(Bot):
             if self._state is not None:
                 self._reward += reward
 
-    def on_bullet_hit(self, event):
+    def on_bullet_hit(self, e: BulletHitBotEvent) -> None:
         self._add_reward(10)
 
-    def on_hit_by_bullet(self, event):
+    def on_hit_by_bullet(self, e: HitByBulletEvent) -> None:
         self._add_reward(-10)
 
-    def on_hit_wall(self, event):
+    def on_hit_wall(self, e: HitWallEvent) -> None:
         self._add_reward(-5)
 
-    def on_hit_bot(self, event):
+    def on_hit_bot(self, e: HitBotEvent) -> None:
         self._add_reward(-3)
 
-    def on_bot_death(self, event):
-        if self._target is not None and event.victim_id == self._target[0]:
+    def on_bot_death(self, e: BotDeathEvent) -> None:
+        if self._target is not None and e.victim_id == self._target[0]:
             # Keep the last observation for the pending transition; allow retargeting.
             self._target = (self._target[0], *self._target[1:4], -self.TARGET_TIMEOUT - 1)
 
-    def on_death(self, event):
+    def on_death(self, e: DeathEvent) -> None:
         if self._outcome is None:
             self._outcome = "loss"
             self._add_reward(-100)
 
-    def on_won_round(self, event):
+    def on_won_round(self, e: WonRoundEvent) -> None:
         if self._outcome is None:
             self._outcome = "win"
             self._add_reward(100)
 
-    def on_round_ended(self, event):
-        self._round_end = event # API 1.4.0 flushes final events AFTER this callback returns.
+    def on_round_ended(self, e: RoundEndedEvent) -> None:
+        self._round_end = e # API 1.4.0 flushes final events AFTER this callback returns.
 
-    def on_game_ended(self, event):
+    def on_game_ended(self, e: GameEndedEvent) -> None:
         self._finish_episode()
         self._plot_performance()
 
@@ -169,12 +182,13 @@ class CapPeeler(Bot):
         )
         self._plotted_episode = self.qtable.episodes
 
-    def on_game_aborted(self, event):
+    def on_game_aborted(self, e: None) -> None:
+        # Tank Royale supplies None for this callback, rather than an event object.
         self._finish_episode()
 
     def _finish_episode(self):
-        event = self._round_end
-        if event is None or self._finished:
+        e: RoundEndedEvent | None = self._round_end
+        if e is None or self._finished:
             return
         # Finalize here, after all terminal-turn rewards have been collected.
         if self.training and self._state is not None:
@@ -191,10 +205,10 @@ class CapPeeler(Bot):
                 if header:
                     writer.writerow(("episode", "round", "outcome", "reward",
                                      "turns", "actions", "epsilon"))
-                writer.writerow((self.qtable.episodes, event.round_number,
+                writer.writerow((self.qtable.episodes, e.round_number,
                                  self._outcome or "draw", self._total_reward,
-                                 event.turn_number, self._steps, self.qtable.epsilon))
-        print(f"Round {event.round_number}: {self._outcome or 'draw'}, "
+                                 e.turn_number, self._steps, self.qtable.epsilon))
+        print(f"Round {e.round_number}: {self._outcome or 'draw'}, "
               f"reward={self._total_reward:g}, epsilon={self.qtable.epsilon:.3f}")
 
 

@@ -15,7 +15,7 @@ class Action(IntEnum):
     FIRE = 4
     FACE_ENEMY = 5
 
-def encode_state(distance, bearing, own_energy, enemy_energy):
+def encode_state(distance: int, bearing: int, own_energy: int, enemy_energy: int) -> tuple[int, int, int, int]:
     """Distance: <150/<400/far; energy: <30/<70/high.
 
     Tank Royale positive bearings turn left: front/right/back/left = 0/1/2/3.
@@ -29,7 +29,7 @@ def encode_state(distance, bearing, own_energy, enemy_energy):
     return distance_bin, bearing_bin, energy_bin(own_energy), energy_bin(enemy_energy)
 
 class LUTInterface(BaseInterface):
-    def __init__(self, state_shape=(3, 4, 3, 3), n_actions: int = 6, alpha: float = 0.1, gamma: float = 0.95, epsilon: float = 1.0, seed=None):
+    def __init__(self, state_shape: tuple = (3, 4, 3, 3), n_actions: int = 6, alpha: float = 0.1, gamma: float = 0.95, epsilon: float = 1.0, seed=None):
         super().__init__()
         if not all(0 <= value <= 1 for value in (alpha, gamma, epsilon)):
             raise ValueError("alpha, gamma and epsilon must be in [0, 1]")
@@ -38,20 +38,20 @@ class LUTInterface(BaseInterface):
         self.Q = np.zeros((*state_shape, n_actions), dtype=float)
         self.episodes: int = 0
 
-    def choose_action(self, state, explore=True):
+    def choose_action(self, state, explore: bool = True) -> int:
         if explore and self.rng.random() < self.epsilon:
             return int(self.rng.integers(self.Q.shape[-1]))
         values = self.Q[state]
         return int(self.rng.choice(np.flatnonzero(values == values.max())))
 
-    def update(self, state, action, reward, next_state=None, done=False) -> float:
+    def update(self, state, action: Action, reward: int, next_state=None, done: bool = False) -> float:
         current = self.Q[state + (action,)]
         target = reward if done else reward + self.gamma * self.Q[next_state].max()
         td_error = float(target - current)
         self.Q[state + (action,)] += self.alpha * td_error
         return td_error
 
-    def decay_epsilon(self, decay=0.995, minimum=0.05):
+    def decay_epsilon(self, decay: float = 0.995, minimum: float = 0.05) -> None:
         self.epsilon = max(minimum, self.epsilon * decay)
 
     def saveWeights(self, filename: str = "weights.npz") -> None:
@@ -75,8 +75,8 @@ class LUTInterface(BaseInterface):
             raise ValueError("Invalid saved training metadata")
         self.Q, self.epsilon, self.episodes = values, epsilon, episodes
 
-    def plotLearningPerformance(self, filename, window: int = 50,
-                                output_path=None, show: bool = False):
+    def plotLearningPerformance(self, filename: str, window: int = 50,
+                                output_path: str | None = None, show: bool = False) -> tuple:
         """Plot training rewards, win rate and epsilon from the round history.
 
         Rolling statistics include up to `window` rounds, including the current

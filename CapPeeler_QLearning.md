@@ -32,8 +32,14 @@ Terminal transitions use reward alone. Defaults: alpha=0.1, gamma=0.95,
 epsilon=1.0, decaying by 0.995 each completed round to a minimum of 0.05.
 Greedy action selection breaks ties randomly.
 
-`src/LUTInterface.py` implements Q-learning and the abstract `BaseInterface` methods `saveWeights` and `loadWeights`. These persist Q-values, epsilon and episode count in the existing `.npz` format. `CapPeelerRL.py` defines the
-encoder and six actions. `bots/CapPeeler/CapPeeler.py` is my robot.
+`src/LUTInterface.py` implements Q-learning, the `State` dataclass, six actions,
+and the abstract `BaseInterface` methods `saveWeights` and `loadWeights`. These
+persist Q-values, epsilon and episode count in the existing `.npz` format.
+`bots/CapPeeler/CapPeeler.py` is my robot.
+`State` stores raw distance, bearing and energies as an immutable observation.
+Its `distance_bin`, `bearing_bin`, `own_energy_bin`, and `enemy_energy_bin`
+properties discretize those measurements. The LUT uses `state.to_tuple()` only
+when indexing the NumPy table; action selection and updates accept `State` objects.
 The existing neural-network interfaces from assignment #1 are independent and unchanged.
 
 State order: distance, bearing, own energy, enemy energy (3 x 4 x 3 x 3).

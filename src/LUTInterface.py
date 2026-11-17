@@ -1,11 +1,11 @@
-from pathlib import Path
 import csv
-from BaseInterface import BaseInterface
 import numpy as np
 import matplotlib.pyplot as plt
-"""State and action definitions shared by CapPeeler and its tests."""
+from pathlib import Path
 from enum import IntEnum
+from dataclasses import dataclass
 
+from BaseInterface import BaseInterface
 
 class Action(IntEnum):
     FORWARD = 0
@@ -15,18 +15,35 @@ class Action(IntEnum):
     FIRE = 4
     FACE_ENEMY = 5
 
-def encode_state(distance: int, bearing: int, own_energy: int, enemy_energy: int) -> tuple[int, int, int, int]:
-    """Distance: <150/<400/far; energy: <30/<70/high.
+@dataclass(frozen=True)
+class State: # an observation snapshot, converted to discrete bins only for LUT indexing
+    distance: int | float
+    bearing: int | float
+    own_energy: int | float
+    enemy_energy: int | float
 
-    Tank Royale positive bearings turn left: front/right/back/left = 0/1/2/3.
-    """
-    distance_bin = 0 if distance < 150 else 1 if distance < 400 else 2
-    bearing = (bearing + 180) % 360 - 180
-    bearing_bin = 0 if -45 <= bearing < 45 else (
-        3 if 45 <= bearing < 135 else 1 if -135 <= bearing < -45 else 2)
-    def energy_bin(energy):
+    def _energy_bin(self, energy: int | float) -> int:
         return 0 if energy < 30 else 1 if energy < 70 else 2
-    return distance_bin, bearing_bin, energy_bin(own_energy), energy_bin(enemy_energy)
+
+    @property
+    def distance_bin(self) -> int:
+        return 0 if self.distance < 150 else 1 if self.distance < 400 else 2
+
+    @property
+    def bearing_bin(self) -> int:
+        bearing = (self.bearing + 180) % 360 - 180
+        return 0 if -45 <= bearing < 45 else (3 if 45 <= bearing < 135 else 1 if -135 <= bearing < -45 else 2)
+
+    @property
+    def own_energy_bin(self) -> int:
+        return self._energy_bin(self.own_energy)
+
+    @property
+    def enemy_energy_bin(self) -> int:
+        return self._energy_bin(self.enemy_energy)
+
+    def to_tuple(self) -> tuple[int, int, int, int]:
+        return self.distance_bin, self.bearing_bin, self.own_energy_bin, self.enemy_energy_bin
 
 class LUTInterface(BaseInterface):
     def __init__(self, state_shape: tuple = (3, 4, 3, 3), n_actions: int = 6, alpha: float = 0.1, gamma: float = 0.95, epsilon: float = 1.0, seed=None):
@@ -38,17 +55,20 @@ class LUTInterface(BaseInterface):
         self.Q = np.zeros((*state_shape, n_actions), dtype=float)
         self.episodes: int = 0
 
-    def choose_action(self, state, explore: bool = True) -> int:
+    def choose_action(self, state: State, explore: bool = True) -> int:
         if explore and self.rng.random() < self.epsilon:
             return int(self.rng.integers(self.Q.shape[-1]))
-        values = self.Q[state]
+        values = self.Q[state.to_tuple()]
         return int(self.rng.choice(np.flatnonzero(values == values.max())))
 
-    def update(self, state, action: Action, reward: int, next_state=None, done: bool = False) -> float:
-        current = self.Q[state + (action,)]
-        target = reward if done else reward + self.gamma * self.Q[next_state].max()
+    def update(self, state: State, action: Action | int, reward: float, next_state: State | None = None, done: bool = False) -> float:
+        if not done and next_state is None:
+            raise ValueError("next_state is required for a nonterminal update")
+        index = state.to_tuple() + (action,) # append action to end of state tuple
+        current = self.Q[index] # search Q-table
+        target = reward if done else reward + self.gamma * self.Q[next_state.to_tuple()].max()
         td_error = float(target - current)
-        self.Q[state + (action,)] += self.alpha * td_error
+        self.Q[index] += self.alpha * td_error # add difference of target and current (scaled by alpha) to Q value
         return td_error
 
     def decay_epsilon(self, decay: float = 0.995, minimum: float = 0.05) -> None:

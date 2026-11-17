@@ -9,7 +9,7 @@ import subprocess
 SOURCE_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE_DIR))
 
-from LUTInterface import LUTInterface, Action, encode_state
+from LUTInterface import LUTInterface, Action, State
 from robocode_tank_royale.bot_api import Color
 from robocode_tank_royale.bot_api.bot import Bot
 # from robocode_tank_royale.bot_api.bot_info import BotInfo
@@ -49,7 +49,7 @@ class CapPeeler(Bot):
 
     def _reset_episode(self):
         self._target = None
-        self._state = None
+        self._state: State | None = None
         self._action = None
         self._action_turn = 0
         self._reward = 0.0
@@ -80,10 +80,10 @@ class CapPeeler(Bot):
             self._target = (e.scanned_bot_id, e.x, e.y,
                             e.energy, e.turn_number)
 
-    def _observation(self):
+    def _observation(self) -> State:
         _, x, y, energy, _ = self._target
-        return encode_state(self.distance_to(x, y), self.bearing_to(x, y),
-                            self.energy, energy)
+        return State(distance=self.distance_to(x, y), bearing=self.bearing_to(x, y),
+                     own_energy=self.energy, enemy_energy=energy)
 
     def on_tick(self, e: TickEvent) -> None:
         if self._outcome is not None or self._finished or self._round_end is not None:

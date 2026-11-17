@@ -56,10 +56,10 @@ class LUTInterface(BaseInterface):
         self.episodes: int = 0
 
     def choose_action(self, state: State, explore: bool = True) -> int:
-        if explore and self.rng.random() < self.epsilon:
-            return int(self.rng.integers(self.Q.shape[-1]))
-        values = self.Q[state.to_tuple()]
-        return int(self.rng.choice(np.flatnonzero(values == values.max())))
+        if explore and (self.rng.random() < self.epsilon): # if epsilon > random number between (0,1) (epsilon is percentage of random exploratory moves)
+            return int(self.rng.integers(self.Q.shape[-1])) # random number between 0 and 5
+        values = self.Q[state.to_tuple()] # choose largest value (highest probability)
+        return int(self.rng.choice(np.flatnonzero(values == values.max()))) # choose randomly if there is a tie for largest value
 
     def update(self, state: State, action: Action | int, reward: float, next_state: State | None = None, done: bool = False) -> float:
         if not done and next_state is None:

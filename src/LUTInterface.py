@@ -61,12 +61,18 @@ class LUTInterface(BaseInterface):
         values = self.Q[state.to_tuple()] # choose largest value (highest probability)
         return int(self.rng.choice(np.flatnonzero(values == values.max()))) # choose randomly if there is a tie for largest value
 
-    def update(self, state: State, action: Action | int, reward: float, next_state: State | None = None, done: bool = False) -> float:
+    def update(self, state: State, action: Action | int, reward: float, next_state: State | None = None, done: bool = False, next_action: Action | int | None = None) -> float:
+        """Q-learning by default; supply the actual next action for SARSA."""
         if not done and next_state is None:
             raise ValueError("next_state is required for a non-terminal update")
         index = state.to_tuple() + (action,) # append action to end of state tuple
         current = self.Q[index] # search Q-table
-        target = reward if done else reward + self.gamma * self.Q[next_state.to_tuple()].max()
+        if done:
+            target = reward
+        else:
+            values = self.Q[next_state.to_tuple()]
+            bootstrap = values.max() if next_action is None else values[next_action]
+            target = reward + self.gamma * bootstrap
         td_error = float(target - current)
         self.Q[index] += self.alpha * td_error # add difference of target and current (scaled by alpha) to Q value
         return td_error

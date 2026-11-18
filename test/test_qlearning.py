@@ -14,6 +14,50 @@ from bots.CapPeeler.CapPeeler import CapPeeler
 
 
 class LearningTests(unittest.TestCase):
+    def test_sarsa_uses_selected_action_instead_of_maximum(self):
+        table = LUTInterface(alpha=0.1, gamma=0.95)
+        state, nxt = State(100, 0, 20, 20), State(250, -90, 50, 50)
+        table.Q[nxt.to_tuple()] = [-4, 8, 1, 2, 0, 3]
+        table.update(state, 2, 10, nxt, next_action=0)
+        self.assertAlmostEqual(table.Q[state.to_tuple() + (2,)], .62)
+        table.update(state, 2, -100, done=True)
+        self.assertAlmostEqual(table.Q[state.to_tuple() + (2,)], -9.442)
+
+    def test_sarsa_executes_action_used_for_bootstrap(self):
+        bot = self.bot()
+        bot.algorithm = 'sarsa'
+        bot._bot_internals = Event(radar_turn_rate=0)
+        bot.qtable.choose_action = Mock(side_effect=[1, 4])
+        bot.qtable.update = Mock()
+        bot.on_tick(Event(turn_number=1))
+        bot.on_tick(Event(turn_number=6))
+        self.assertEqual(bot._action, 4)
+        self.assertEqual(bot.qtable.update.call_args.kwargs['next_action'], 4)
+        self.assertEqual(bot.qtable.choose_action.call_count, 2)
+
+    def test_terminal_only_ignores_intermediate_events(self):
+        bot = self.bot()
+        bot.reward_mode = 'terminal'
+        bot._state = State(100, 0, 20, 20)
+        bot.on_bullet_hit(Event())
+        bot.on_hit_by_bullet(Event())
+        bot.on_hit_wall(Event())
+        bot.on_hit_bot(Event())
+        self.assertEqual(bot._reward, 0)
+        bot.on_won_round(Event())
+        self.assertEqual(bot._reward, 100)
+        self.assertEqual(bot._total_reward, 100)
+
+    def test_fixed_zero_exploration_survives_round_end(self):
+        bot = self.bot()
+        bot.fixed_epsilon = 0.0
+        with TemporaryDirectory() as directory:
+            bot.table_path = Path(directory) / 'table.npz'
+            bot.metrics_path = Path(directory) / 'table.csv'
+            bot.on_round_ended(Event(round_number=1, turn_number=1))
+            bot.on_game_ended(Event())
+            self.assertEqual(bot.qtable.epsilon, 0.0)
+
     def test_lut_implements_base_interface(self):
         self.assertIsInstance(LUTInterface(), BaseInterface)
         with self.assertRaises(TypeError):

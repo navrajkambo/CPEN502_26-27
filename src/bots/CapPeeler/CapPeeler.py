@@ -39,10 +39,27 @@ class CapPeeler(Bot):
         self.table_path = Path(os.getenv("CAPPEELER_QTABLE", str(SOURCE_DIR.parent / "training" / "cappeeler.npz")))
         self.metrics_path = self.table_path.with_suffix(".csv")
         self.qtable = LUTInterface()
+        self.algorithm = os.getenv("CAPPEELER_ALGORITHM", "qlearning").lower()
+        self.reward_mode = os.getenv("CAPPEELER_REWARDS", "intermediate").lower()
+        if self.algorithm not in ("qlearning", "sarsa"):
+            raise ValueError("CAPPEELER_ALGORITHM must be qlearning or sarsa")
+        if self.reward_mode not in ("intermediate", "terminal"):
+            raise ValueError("CAPPEELER_REWARDS must be intermediate or terminal")
+        self.fixed_epsilon = os.getenv("CAPPEELER_EPSILON")
+        if self.fixed_epsilon is not None:
+            self.fixed_epsilon = float(self.fixed_epsilon)
+            if not 0 <= self.fixed_epsilon <= 1:
+                raise ValueError("CAPPEELER_EPSILON must be in [0, 1]")
+        seed = os.getenv("CAPPEELER_SEED")
+        if seed is not None:
+            import numpy as np
+            self.qtable.rng = np.random.default_rng(int(seed))
         if self.table_path.exists():
             self.qtable.loadWeights(self.table_path)
         elif not self.training:
             raise FileNotFoundError(f"Train a table before evaluation: {self.table_path}")
+        if self.fixed_epsilon is not None:
+            self.qtable.epsilon = self.fixed_epsilon
         # Process scans, damage and death before each learning decision.
         self.set_event_priority(TickEvent, 0)
         self._reset_episode()
@@ -96,12 +113,16 @@ class CapPeeler(Bot):
             return
         state = self._observation()
         if self._state is None or e.turn_number - self._action_turn >= self.ACTION_TICKS:
+            # SARSA must bootstrap from the action actually executed next.
+            sarsa = getattr(self, "algorithm", "qlearning") == "sarsa"
+            next_action = self.qtable.choose_action(state, explore=self.training) if sarsa else None
             if self._state is not None:
                 if self.training:
-                    self.qtable.update(self._state, self._action, self._reward, state)
+                    self.qtable.update(self._state, self._action, self._reward, state,
+                                       next_action=next_action)
             self._reward = 0.0
             self._state = state
-            self._action = self.qtable.choose_action(state, explore=self.training)
+            self._action = next_action if sarsa else self.qtable.choose_action(state, explore=self.training)
             self._action_turn = e.turn_number
             self._steps += 1
         self._execute_action(e.turn_number)
@@ -129,7 +150,9 @@ class CapPeeler(Bot):
             if abs(self.gun_bearing_to(x, y)) <= 10 and self.energy > 3:
                 self.set_fire(3)
 
-    def _add_reward(self, reward: int):
+    def _add_reward(self, reward: int, terminal: bool = False):
+        if getattr(self, "reward_mode", "intermediate") == "terminal" and not terminal:
+            return
         if not self._finished:
             self._total_reward += reward
             if self._state is not None:
@@ -155,12 +178,12 @@ class CapPeeler(Bot):
     def on_death(self, e: DeathEvent) -> None:
         if self._outcome is None:
             self._outcome = "loss"
-            self._add_reward(-100)
+            self._add_reward(-100, terminal=True)
 
     def on_won_round(self, e: WonRoundEvent) -> None:
         if self._outcome is None:
             self._outcome = "win"
-            self._add_reward(100)
+            self._add_reward(100, terminal=True)
 
     def on_round_ended(self, e: RoundEndedEvent) -> None:
         self._round_end = e # API 1.4.0 flushes final events AFTER this callback returns.
@@ -196,7 +219,8 @@ class CapPeeler(Bot):
         self._finished = True
         if self.training:
             self.qtable.episodes += 1
-            self.qtable.decay_epsilon()
+            if getattr(self, "fixed_epsilon", None) is None:
+                self.qtable.decay_epsilon()
             self.qtable.saveWeights(self.table_path)
             self.metrics_path.parent.mkdir(parents=True, exist_ok=True)
             header = not self.metrics_path.exists()

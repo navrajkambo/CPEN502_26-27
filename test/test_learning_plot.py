@@ -58,6 +58,22 @@ class LearningPlotTests(unittest.TestCase):
                 launch.assert_called_once()
                 self.assertIn(str(bot.metrics_path.resolve()), launch.call_args.args[0])
                 self.assertIn("--show", launch.call_args.args[0])
+                self.assertTrue(launch.call_args.kwargs["close_fds"])
+                self.assertEqual(launch.call_args.kwargs["stdin"], -3)
+                self.assertEqual(launch.call_args.kwargs["stderr"], -2)
+
+    def test_plot_launch_failure_does_not_escape_game_end(self):
+        with TemporaryDirectory() as directory:
+            bot = object.__new__(CapPeeler)
+            bot.training = True
+            bot.metrics_path = Path(directory) / "history.csv"
+            bot.metrics_path.touch()
+            bot.qtable = LUTInterface()
+            bot._finish_episode = Mock()
+            bot.diagnostics = Mock()
+            with patch("bots.CapPeeler.CapPeeler.subprocess.Popen", side_effect=OSError("failure")):
+                bot.on_game_ended(Mock(number_of_rounds=100))
+            bot.diagnostics.record.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 import csv
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
@@ -45,6 +46,29 @@ class State: # an observation snapshot, converted to discrete bins only for LUT 
     def to_tuple(self) -> tuple[int, int, int, int]:
         return self.distance_bin, self.bearing_bin, self.own_energy_bin, self.enemy_energy_bin
 
+
+@dataclass(frozen=True)
+class EpsilonSchedule:
+    start: float
+    zero_at_battle: int
+    mode: str = "linear"
+
+    def __post_init__(self):
+        if not 0 <= self.start <= 1:
+            raise ValueError("Starting epsilon must be in [0, 1]")
+        if (not isinstance(self.zero_at_battle, (int, np.integer))
+                or isinstance(self.zero_at_battle, bool) or self.zero_at_battle < 0):
+            raise ValueError("zero_at_battle must be a nonnegative integer")
+        if self.mode not in ("linear", "step"):
+            raise ValueError("Epsilon decay mode must be linear or step")
+
+    def value(self, battle: int) -> float:
+        if battle >= self.zero_at_battle:
+            return 0.0
+        if self.mode == "step":
+            return self.start
+        return self.start * (1 - battle / self.zero_at_battle)
+
 class LUTInterface(BaseInterface):
     def __init__(self, state_shape: tuple = (3, 4, 3, 3), n_actions: int = 6, alpha: float = 0.1, gamma: float = 0.95, epsilon: float = 1.0, seed=None):
         super().__init__()
@@ -53,7 +77,15 @@ class LUTInterface(BaseInterface):
         self.alpha, self.gamma, self.epsilon = alpha, gamma, epsilon
         self.rng = np.random.default_rng(seed)
         self.Q = np.zeros((*state_shape, n_actions), dtype=float)
+        # Count training updates, including those with zero TD error.
+        self.update_counts = np.zeros(self.Q.shape, dtype=np.int64)
         self.episodes: int = 0
+        self.epsilon_schedule: EpsilonSchedule | None = None
+
+    @property
+    def state_update_counts(self) -> np.ndarray:
+        """Total updates to each state row, summed over its actions."""
+        return self.update_counts.sum(axis=-1)
 
     def choose_action(self, state: State, explore: bool = True) -> int:
         if explore and (self.rng.random() < self.epsilon): # if epsilon > random number between (0,1) (epsilon is percentage of random exploratory moves)
@@ -75,19 +107,52 @@ class LUTInterface(BaseInterface):
             target = reward + self.gamma * bootstrap
         td_error = float(target - current)
         self.Q[index] += self.alpha * td_error # add difference of target and current (scaled by alpha) to Q value
+        self.update_counts[index] += 1
         return td_error
 
+    def configure_epsilon(self, start: float, zero_at_battle: int,
+                          mode: str = "linear") -> None:
+        """Schedule epsilon using the zero-based battle index (completed episodes).
+
+        Linear: start * (1 - battle / cutoff). Step: hold start until cutoff.
+        Both remain exactly zero at and after the cutoff. Resumes use the saved
+        episode count, rather than restarting the schedule.
+        """
+        schedule = EpsilonSchedule(start, zero_at_battle, mode)
+        self.epsilon_schedule = schedule
+        self.epsilon = schedule.value(self.episodes)
+
     def decay_epsilon(self, decay: float = 0.995, minimum: float = 0.05) -> None:
-        self.epsilon = max(minimum, self.epsilon * decay)
+        if self.epsilon_schedule is not None:
+            self.epsilon = self.epsilon_schedule.value(self.episodes)
+        else:
+            self.epsilon = max(minimum, self.epsilon * decay)
 
     def saveWeights(self, filename: str = "weights.npz") -> None:
-        # save Q-values, exploration rate and completed training episodes
+        # Save Q-values, update counts, exploration rate and completed episodes.
         path = Path(filename)
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
+        schedule_data = {} if self.epsilon_schedule is None else {
+            "epsilon_start": self.epsilon_schedule.start,
+            "epsilon_zero_at_battle": self.epsilon_schedule.zero_at_battle,
+            "epsilon_decay_mode": self.epsilon_schedule.mode,
+        }
         with temporary.open("wb") as stream:
-            np.savez_compressed(stream, Q=self.Q, epsilon=self.epsilon, episodes=self.episodes)
-        temporary.replace(path)
+            np.savez_compressed(stream, Q=self.Q, update_counts=self.update_counts,
+                                epsilon=self.epsilon, episodes=self.episodes,
+                                **schedule_data)
+        # Windows readers (for example an editor or scanner) may briefly prevent
+        # replacing an open checkpoint. Retry only that transient access error;
+        # preserve the old checkpoint and completed temporary file on failure.
+        for attempt in range(5):
+            try:
+                temporary.replace(path)
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * 2 ** attempt)
 
     def loadWeights(self, filename: str = "weights.npz") -> None:
         # load training state, validating it before replacing the current table
@@ -95,11 +160,24 @@ class LUTInterface(BaseInterface):
             values = np.array(data["Q"], dtype=float, copy=True)
             epsilon = float(data["epsilon"])
             episodes = int(data["episodes"]) if "episodes" in data else 0
+            # Older files do not contain historical update counts. Start tracking
+            # from zero while retaining their learned Q-values and metadata.
+            counts = (np.array(data["update_counts"], copy=True)
+                      if "update_counts" in data else np.zeros(values.shape, dtype=np.int64))
+            schedule = (EpsilonSchedule(float(data["epsilon_start"]),
+                                        data["epsilon_zero_at_battle"].item(),
+                                        str(data["epsilon_decay_mode"].item()))
+                        if "epsilon_zero_at_battle" in data else None)
         if values.shape != self.Q.shape or not np.isfinite(values).all():
             raise ValueError("Saved Q-table has incompatible shape or invalid values")
         if not 0 <= epsilon <= 1 or episodes < 0:
             raise ValueError("Invalid saved training metadata")
+        if (counts.shape != self.Q.shape or counts.dtype.kind not in "iu"
+                or np.any(counts < 0) or np.any(counts > np.iinfo(np.int64).max)):
+            raise ValueError("Saved update counts must be nonnegative integers matching the Q-table shape")
         self.Q, self.epsilon, self.episodes = values, epsilon, episodes
+        self.update_counts = counts.astype(np.int64)
+        self.epsilon_schedule = schedule
 
     def plotLearningPerformance(self, filename: str, window: int = 50,
                                 output_path: str | None = None, show: bool = False) -> tuple:

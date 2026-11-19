@@ -1,5 +1,71 @@
 # CapPeeler Q-learning
 
+## Diagnosing stalled battles
+
+Checkpoint replacement retries transient Windows `PermissionError` failures up
+to five attempts with a total maximum retry delay of 0.75 seconds. Persistent
+save errors are recorded with a traceback in the diagnostic log. The prior
+checkpoint and completed `.npz.tmp` are preserved on replacement failure. An
+orphaned temporary checkpoint can also mean the process was stopped during a
+save; it is evidence of an interrupted save, not proof of a Windows file lock.
+The watchdog remains active while waiting for round end after death, so those
+stalls can also produce a thread snapshot.
+
+CapPeeler records lifecycle information in `training/cappeeler.diagnostics.log`
+(beside a custom table when configured). If active tick progress stops for 20
+seconds, a background watchdog writes all Python thread stacks once for that
+stall. It does no disk I/O on the normal per-tick path. An intentional pause
+can also trigger this diagnostic; it is evidence to inspect, not a diagnosis.
+Restart the bot after code changes. `CAPPEELER_DIAGNOSTICS=0` disables the watchdog.
+The plot subprocess has separate input/output handles and sends errors to
+`training/cappeeler.plot.log`, so an open plot cannot retain the booter's pipes.
+No automatic process restarts or battle-rule changes are made.
+
+## Epsilon schedules with an exact cutoff
+
+Configure the LUT after loading any saved table:
+
+```python
+lut.configure_epsilon(start=0.8, zero_at_battle=7000, mode="linear")
+# Or: mode="step" to hold 0.8 through battle 6999, then use 0 at 7000.
+```
+
+Battle indices are zero-based. The saved `episodes` count is the index of the
+next training round: a new table starts at battle 0. Linear decay uses
+`max(0, start * (1 - battle / zero_at_battle))`. At battle 3500 epsilon is 0.4;
+at 6999 it is approximately 0.0001143; at 7000 and later it is exactly zero.
+A cutoff of zero disables exploration immediately. These schedules have no
+0.05 floor. They control exploration; learning continues after epsilon is zero.
+The schedule and progress are saved by `saveWeights` and restored by `loadWeights`.
+`configure_epsilon` immediately applies the schedule at the current episode count.
+Increment `lut.episodes` after each training round, then call `lut.decay_epsilon()`;
+CapPeeler already does this. Evaluation does not advance the schedule.
+
+Configure CapPeeler directly in its `main()` function:
+
+```python
+CapPeeler(epsilon_start=0.8, epsilon_zero_at_battle=7000,
+          epsilon_decay="step").start()
+```
+
+Or set these before launching the GUI (environment settings override constructor
+arguments):
+
+```powershell
+$env:CAPPEELER_EPSILON_START = '0.8'
+$env:CAPPEELER_EPSILON_ZERO_AT = '7000'
+$env:CAPPEELER_EPSILON_DECAY = 'linear'  # or 'step'
+Remove-Item Env:CAPPEELER_EPSILON -ErrorAction SilentlyContinue
+```
+
+`CAPPEELER_EPSILON` remains a fixed-value override with highest priority.
+Without an explicit cutoff, the saved schedule resumes automatically; if no
+schedule was saved, the previous exponential decay remains in use. Existing
+tables past episode 7000 immediately use zero when configured with that cutoff.
+Use a new table path to start at battle 0. The CSV still records epsilon after
+each completed round (the value for the next battle), with one-based episode
+numbers, so its row for episode 7000 records epsilon 0.
+
 ## Assignment (2): state and action LUT
 
 The observation is quantized only when indexing the table:
@@ -18,6 +84,34 @@ Thus the state-row representation has **108 rows and 6 action columns**. If each
 row represents a complete state-action pair, there are **648 rows/Q-values**.
 The actual NumPy array has shape (3,4,3,3,6). Actions are a predefined discrete
 set, rather than a quantization of all possible continuous control combinations.
+
+Update frequencies are tracked separately from Q-values:
+
+- `lut.update_counts` has the same shape as `lut.Q` and counts updates per
+  state-action pair. It increments on each successful Q-learning or SARSA update,
+  including terminal updates and updates with zero TD error. Choosing an action
+  or evaluating without learning does not increment it.
+- `lut.state_update_counts` sums across actions, giving total updates per state
+  row with shape (3,4,3,3).
+- `saveWeights` persists `update_counts` in the `.npz` file; `loadWeights` restores
+  it. Older files still load, but counts start at zero: historical update counts
+  cannot be recovered from their Q-values or the per-round CSV. Thus zero counts
+  in resumed old tables mean no updates recorded since tracking was introduced.
+
+For later neural-network training, filter a separate dataset rather than deleting
+entries from the live LUT (all state indices must remain valid). For example:
+
+```python
+mask = lut.update_counts >= 20  # Example threshold, chosen for your dataset.
+inputs = np.argwhere(mask)     # Columns: four state-bin indices, action index.
+targets = lut.Q[mask]          # Corresponding scalar Q-value targets.
+counts = lut.update_counts[mask]
+```
+
+For a network predicting all six actions per state, `lut.state_update_counts`
+filters total state coverage, but does not guarantee every action was learned.
+Use `(lut.update_counts >= 20).all(axis=-1)` if all six targets must meet the
+threshold. These are discrete bin indices, not raw physical measurements.
 
 ## Assignment (3a): measured learning progress
 
@@ -117,7 +211,7 @@ After the configured rounds finish, a plot window opens automatically with
 round reward, average reward and win rate over the last 50 rounds, and epsilon
 against completed training rounds. Early averages use the available rounds.
 The figure includes the full saved training history and is also saved as
-`training/cappeeler.png` (or beside your custom CSV). These are training results
+`training/cappeeler-new.png` (or beside your custom CSV). These are training results
 including exploration, rather than separate zero-epsilon evaluation results.
 The epsilon curve shows the recorded value after each round.
 

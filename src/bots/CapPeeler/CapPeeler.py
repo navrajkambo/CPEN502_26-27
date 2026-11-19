@@ -4,12 +4,14 @@ import os
 from pathlib import Path
 import sys
 import subprocess
+import traceback
 
 # robocode launches this file from the bot directory.
 SOURCE_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE_DIR))
 
 from LUTInterface import LUTInterface, Action, State
+from BotDiagnostics import BotDiagnostics
 from robocode_tank_royale.bot_api import Color
 from robocode_tank_royale.bot_api.bot import Bot
 # from robocode_tank_royale.bot_api.bot_info import BotInfo
@@ -33,7 +35,9 @@ class CapPeeler(Bot):
     ACTION_TICKS = 5
     TARGET_TIMEOUT = 30
 
-    def __init__(self):
+    def __init__(self, epsilon_start: float = 0.8,
+                 epsilon_zero_at_battle: int | None = None,
+                 epsilon_decay: str = "linear"):
         super().__init__()
         self.training = os.getenv("CAPPEELER_TRAINING", "1") != "0"
         self.table_path = Path(os.getenv("CAPPEELER_QTABLE", str(SOURCE_DIR.parent / "training" / "cappeeler.npz")))
@@ -58,11 +62,23 @@ class CapPeeler(Bot):
             self.qtable.loadWeights(self.table_path)
         elif not self.training:
             raise FileNotFoundError(f"Train a table before evaluation: {self.table_path}")
+        cutoff = os.getenv("CAPPEELER_EPSILON_ZERO_AT")
+        if cutoff is not None:
+            epsilon_zero_at_battle = int(cutoff)
+        if epsilon_zero_at_battle is not None:
+            self.qtable.configure_epsilon(
+                start=float(os.getenv("CAPPEELER_EPSILON_START", str(epsilon_start))),
+                zero_at_battle=epsilon_zero_at_battle,
+                mode=os.getenv("CAPPEELER_EPSILON_DECAY", epsilon_decay).lower(),
+            )
         if self.fixed_epsilon is not None:
             self.qtable.epsilon = self.fixed_epsilon
         # Process scans, damage and death before each learning decision.
         self.set_event_priority(TickEvent, 0)
         self._reset_episode()
+        self.diagnostics = None
+        if os.getenv("CAPPEELER_DIAGNOSTICS", "1") != "0":
+            self.diagnostics = BotDiagnostics(self.table_path.with_suffix(".diagnostics.log"))
 
     def _reset_episode(self):
         self._target = None
@@ -77,8 +93,14 @@ class CapPeeler(Bot):
         self._round_end = None
 
     def on_round_started(self, e: RoundStartedEvent) -> None:
+        self._heartbeat(f"starting round {e.round_number}")
         self._finish_episode()
         self._reset_episode()
+
+    def _heartbeat(self, phase):
+        diagnostics = getattr(self, "diagnostics", None)
+        if diagnostics is not None:
+            diagnostics.heartbeat(phase)
 
     def run(self):
         self.body_color = Color.from_rgb(255, 0, 255) # purple
@@ -105,6 +127,7 @@ class CapPeeler(Bot):
     def on_tick(self, e: TickEvent) -> None:
         if self._outcome is not None or self._finished or self._round_end is not None:
             return
+        self._heartbeat(f"tick {e.turn_number}")
         self.radar_turn_rate = 45
         if self._target is None:
             self.target_speed = 0
@@ -176,6 +199,12 @@ class CapPeeler(Bot):
             self._target = (self._target[0], *self._target[1:4], -self.TARGET_TIMEOUT - 1)
 
     def on_death(self, e: DeathEvent) -> None:
+        diagnostics = getattr(self, "diagnostics", None)
+        if diagnostics is not None:
+            # Continue monitoring: a stall can happen while waiting for the next
+            # round or saving the preceding one, even after the bot has died.
+            diagnostics.heartbeat(f"died on turn {e.turn_number}; waiting for round end")
+            diagnostics.record(f"died on turn {e.turn_number}; waiting for round end")
         if self._outcome is None:
             self._outcome = "loss"
             self._add_reward(-100, terminal=True)
@@ -186,9 +215,13 @@ class CapPeeler(Bot):
             self._add_reward(100, terminal=True)
 
     def on_round_ended(self, e: RoundEndedEvent) -> None:
+        self._heartbeat(f"round {e.round_number} ended; waiting for next round or game end")
         self._round_end = e # API 1.4.0 flushes final events AFTER this callback returns.
 
     def on_game_ended(self, e: GameEndedEvent) -> None:
+        diagnostics = getattr(self, "diagnostics", None)
+        if diagnostics is not None:
+            diagnostics.idle(f"game ended after {e.number_of_rounds} rounds")
         self._finish_episode()
         self._plot_performance()
 
@@ -198,14 +231,28 @@ class CapPeeler(Bot):
             return
         # A separate process keeps the plotting GUI on its own main thread and
         # leaves the bot free to receive future game/server events.
-        subprocess.Popen(
-            [sys.executable, str(SOURCE_DIR / "plot_learning.py"),
-             str(self.metrics_path.resolve()), "--show"],
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
+        # Do not inherit the booter's pipes: a plot window can outlive the bot.
+        # Keep errors in a file instead of sending them to the battle console.
+        try:
+            with self.metrics_path.with_suffix(".plot.log").open("a") as plot_log:
+                subprocess.Popen(
+                    [sys.executable, str(SOURCE_DIR / "plot_learning.py"),
+                     str(self.metrics_path.resolve()), "--show"],
+                    stdin=subprocess.DEVNULL, stdout=plot_log, stderr=subprocess.STDOUT,
+                    close_fds=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                )
+        except OSError as error:
+            diagnostics = getattr(self, "diagnostics", None)
+            if diagnostics is not None:
+                diagnostics.record(f"Could not launch plot: {error}")
+            return
         self._plotted_episode = self.qtable.episodes
 
     def on_game_aborted(self, e: None) -> None:
+        diagnostics = getattr(self, "diagnostics", None)
+        if diagnostics is not None:
+            diagnostics.idle("game aborted")
         # Tank Royale supplies None for this callback, rather than an event object.
         self._finish_episode()
 
@@ -221,7 +268,14 @@ class CapPeeler(Bot):
             self.qtable.episodes += 1
             if getattr(self, "fixed_epsilon", None) is None:
                 self.qtable.decay_epsilon()
-            self.qtable.saveWeights(self.table_path)
+            try:
+                self.qtable.saveWeights(self.table_path)
+            except OSError:
+                diagnostics = getattr(self, "diagnostics", None)
+                if diagnostics is not None:
+                    diagnostics.record(f"Checkpoint save failed at episode {self.qtable.episodes}:\n"
+                                       + traceback.format_exc())
+                raise
             self.metrics_path.parent.mkdir(parents=True, exist_ok=True)
             header = not self.metrics_path.exists()
             with self.metrics_path.open("a", newline="", encoding="utf-8") as stream:
@@ -237,7 +291,16 @@ class CapPeeler(Bot):
 
 
 def main():
-    CapPeeler().start()
+    bot = CapPeeler(
+        epsilon_start=0.8,
+        epsilon_zero_at_battle=7000,
+        epsilon_decay="linear",  # or "step"
+    )
+    try:
+        bot.start()
+    finally:
+        if bot.diagnostics is not None:
+            bot.diagnostics.close()
 
 
 if __name__ == "__main__":

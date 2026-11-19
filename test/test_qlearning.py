@@ -14,6 +14,162 @@ from bots.CapPeeler.CapPeeler import CapPeeler
 
 
 class LearningTests(unittest.TestCase):
+    def test_checkpoint_retries_temporary_windows_file_lock(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'table.npz'
+            table = LUTInterface()
+            original_replace = Path.replace
+            attempts = []
+
+            def transient_lock(source, target):
+                attempts.append(source)
+                if len(attempts) < 3:
+                    raise PermissionError('checkpoint temporarily open')
+                return original_replace(source, target)
+
+            with patch.object(Path, 'replace', transient_lock), patch('LUTInterface.time.sleep'):
+                table.saveWeights(path)
+            self.assertEqual(len(attempts), 3)
+            restored = LUTInterface()
+            restored.loadWeights(path)
+            np.testing.assert_array_equal(restored.Q, table.Q)
+
+    def test_checkpoint_persistent_lock_preserves_previous_file(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'table.npz'
+            table = LUTInterface()
+            table.saveWeights(path)
+            previous = path.read_bytes()
+            table.episodes = 1
+            with patch.object(Path, 'replace', side_effect=PermissionError('locked')) as replace:
+                with patch('LUTInterface.time.sleep'):
+                    with self.assertRaises(PermissionError):
+                        table.saveWeights(path)
+            self.assertEqual(replace.call_count, 5)
+            self.assertEqual(path.read_bytes(), previous)
+            self.assertTrue(path.with_suffix('.npz.tmp').exists())
+
+    def test_checkpoint_failure_is_logged(self):
+        bot = self.bot()
+        bot.diagnostics = Mock()
+        with TemporaryDirectory() as directory:
+            bot.table_path = Path(directory) / 'table.npz'
+            bot.qtable.saveWeights = Mock(side_effect=PermissionError('locked'))
+            bot.on_round_ended(Event(round_number=1, turn_number=1))
+            with self.assertRaises(PermissionError):
+                bot._finish_episode()
+        self.assertIn('PermissionError', bot.diagnostics.record.call_args.args[0])
+
+    def test_linear_epsilon_schedule_reaches_exact_zero(self):
+        table = LUTInterface()
+        table.configure_epsilon(start=.8, zero_at_battle=7000, mode="linear")
+        for battle, expected in ((0, .8), (3500, .4), (6999, .8 / 7000),
+                                 (7000, 0), (7001, 0)):
+            table.episodes = battle
+            table.decay_epsilon()
+            self.assertAlmostEqual(table.epsilon, expected)
+
+    def test_step_epsilon_schedule_and_immediate_cutoff(self):
+        table = LUTInterface()
+        table.configure_epsilon(start=.8, zero_at_battle=7000, mode="step")
+        for battle, expected in ((0, .8), (3500, .8), (6999, .8), (7000, 0), (7001, 0)):
+            table.episodes = battle
+            table.decay_epsilon()
+            self.assertEqual(table.epsilon, expected)
+        table.episodes = 0
+        table.configure_epsilon(start=.8, zero_at_battle=0)
+        self.assertEqual(table.epsilon, 0)
+
+    def test_invalid_epsilon_schedule_leaves_current_setting_unchanged(self):
+        table = LUTInterface(epsilon=.3)
+        for options in (dict(start=-.1, zero_at_battle=7000),
+                        dict(start=.8, zero_at_battle=-1),
+                        dict(start=.8, zero_at_battle=1.5),
+                        dict(start=.8, zero_at_battle=7000, mode="unknown")):
+            with self.assertRaises(ValueError):
+                table.configure_epsilon(**options)
+            self.assertEqual(table.epsilon, .3)
+            self.assertIsNone(table.epsilon_schedule)
+
+    def test_schedule_round_boundary_and_resume(self):
+        bot = self.bot()
+        bot.qtable.episodes = 6999
+        bot.qtable.configure_epsilon(start=.8, zero_at_battle=7000, mode="step")
+        self.assertEqual(bot.qtable.epsilon, .8)
+        with TemporaryDirectory() as directory:
+            bot.table_path = Path(directory) / 'table.npz'
+            bot.metrics_path = Path(directory) / 'table.csv'
+            bot.on_round_ended(Event(round_number=1, turn_number=1))
+            bot.on_game_ended(Event())
+            self.assertEqual(bot.qtable.epsilon, 0)
+            restored = LUTInterface()
+            restored.loadWeights(bot.table_path)
+            self.assertEqual(restored.epsilon_schedule, bot.qtable.epsilon_schedule)
+            self.assertEqual(restored.episodes, 7000)
+            restored.episodes += 1
+            restored.decay_epsilon()
+            self.assertEqual(restored.epsilon, 0)
+
+    def test_counts_track_updates_per_action_and_state(self):
+        table = LUTInterface()
+        state, nxt = State(100, 0, 20, 20), State(250, -90, 50, 50)
+        table.choose_action(state)
+        table.choose_action(state, explore=False)
+        self.assertEqual(table.update_counts.sum(), 0)
+        table.update(state, 0, 0, nxt)  # Zero TD error is still an update.
+        table.update(state, 0, 10, nxt, next_action=1)  # SARSA.
+        table.update(state, 4, 100, done=True)
+        self.assertEqual(table.update_counts[state.to_tuple() + (0,)], 2)
+        self.assertEqual(table.update_counts[state.to_tuple() + (4,)], 1)
+        self.assertEqual(table.state_update_counts[state.to_tuple()], 3)
+        self.assertEqual(table.state_update_counts[nxt.to_tuple()], 0)
+        with self.assertRaises(ValueError):
+            table.update(state, 0, 10)
+        self.assertEqual(table.update_counts.sum(), 3)
+
+    def test_counts_persist_and_resume(self):
+        state = State(100, 0, 20, 20)
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'table.npz'
+            table = LUTInterface()
+            table.update(state, 4, 100, done=True)
+            table.saveWeights(path)
+            restored = LUTInterface()
+            restored.loadWeights(path)
+            np.testing.assert_array_equal(table.update_counts, restored.update_counts)
+            restored.update(state, 4, 100, done=True)
+            self.assertEqual(restored.update_counts[state.to_tuple() + (4,)], 2)
+
+    def test_legacy_table_loads_without_inventing_counts(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'legacy.npz'
+            table = LUTInterface()
+            values = np.ones_like(table.Q)
+            np.savez(path, Q=values, epsilon=.2, episodes=100)
+            table.update(State(100, 0, 20, 20), 0, 0, done=True)
+            table.loadWeights(path)
+            np.testing.assert_array_equal(table.Q, values)
+            self.assertEqual(table.episodes, 100)
+            self.assertEqual(table.update_counts.sum(), 0)
+
+    def test_invalid_saved_counts_do_not_replace_training_state(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'table.npz'
+            table = LUTInterface()
+            table.update(State(100, 0, 20, 20), 0, 10, done=True)
+            before = table.Q.copy()
+            counts_before = table.update_counts.copy()
+            for counts in (np.zeros((2, 2), dtype=int),
+                           np.full(table.Q.shape, -1, dtype=int),
+                           np.full(table.Q.shape, .5)):
+                with self.subTest(shape=counts.shape, dtype=counts.dtype):
+                    np.savez(path, Q=np.ones_like(table.Q), epsilon=.5,
+                             update_counts=counts)
+                    with self.assertRaises(ValueError):
+                        table.loadWeights(path)
+                    np.testing.assert_array_equal(table.Q, before)
+                    np.testing.assert_array_equal(table.update_counts, counts_before)
+
     def test_sarsa_uses_selected_action_instead_of_maximum(self):
         table = LUTInterface(alpha=0.1, gamma=0.95)
         state, nxt = State(100, 0, 20, 20), State(250, -90, 50, 50)
@@ -183,7 +339,7 @@ class LearningTests(unittest.TestCase):
             bot.on_won_round(Event())
             bot.on_bullet_hit(Event())
             self.assertFalse(bot.table_path.exists())
-            bot.on_round_started(Event())
+            bot.on_round_started(Event(round_number=2))
             self.assertAlmostEqual(bot.qtable.Q.sum(), 11)
             self.assertEqual(bot.qtable.episodes, 1)
             self.assertIsNone(bot._state)
@@ -204,6 +360,7 @@ class LearningTests(unittest.TestCase):
         bot.on_won_round(Event())
         bot.on_game_ended(Event())
         np.testing.assert_array_equal(before, bot.qtable.Q)
+        self.assertEqual(bot.qtable.update_counts.sum(), 0)
         self.assertEqual(bot.qtable.epsilon, 1)
         self.assertEqual(bot.qtable.episodes, 0)
 

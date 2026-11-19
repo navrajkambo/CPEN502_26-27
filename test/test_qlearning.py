@@ -8,10 +8,11 @@ from dataclasses import FrozenInstanceError
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from LUTInterface import LUTInterface, State
+from LUTInterface import LUTInterface, State, EpsilonSchedule
 from BaseInterface import BaseInterface
 from bots.CapPeeler.CapPeeler import CapPeeler
 
+# CHATGPT
 
 class LearningTests(unittest.TestCase):
     def test_checkpoint_retries_temporary_windows_file_lock(self):
@@ -62,7 +63,7 @@ class LearningTests(unittest.TestCase):
 
     def test_linear_epsilon_schedule_reaches_exact_zero(self):
         table = LUTInterface()
-        table.configure_epsilon(start=.8, zero_at_battle=7000, mode="linear")
+        table.configure_epsilon(start=.8, zero_at_battle=7000, mode=EpsilonSchedule.Decay.kLinear)
         for battle, expected in ((0, .8), (3500, .4), (6999, .8 / 7000),
                                  (7000, 0), (7001, 0)):
             table.episodes = battle
@@ -71,7 +72,7 @@ class LearningTests(unittest.TestCase):
 
     def test_step_epsilon_schedule_and_immediate_cutoff(self):
         table = LUTInterface()
-        table.configure_epsilon(start=.8, zero_at_battle=7000, mode="step")
+        table.configure_epsilon(start=.8, zero_at_battle=7000, mode=EpsilonSchedule.Decay.kStep)
         for battle, expected in ((0, .8), (3500, .8), (6999, .8), (7000, 0), (7001, 0)):
             table.episodes = battle
             table.decay_epsilon()
@@ -85,16 +86,99 @@ class LearningTests(unittest.TestCase):
         for options in (dict(start=-.1, zero_at_battle=7000),
                         dict(start=.8, zero_at_battle=-1),
                         dict(start=.8, zero_at_battle=1.5),
-                        dict(start=.8, zero_at_battle=7000, mode="unknown")):
+                        dict(start=.8, zero_at_battle=7000, mode="unknown"),
+                        dict(start=.8, zero_at_battle=7000, mode="linear"),
+                        dict(start=.8, zero_at_battle=7000, mode="Step")):
             with self.assertRaises(ValueError):
                 table.configure_epsilon(**options)
             self.assertEqual(table.epsilon, .3)
             self.assertIsNone(table.epsilon_schedule)
 
+    def test_schedule_checkpoint_modes_and_legacy_strings(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'table.npz'
+            for mode in EpsilonSchedule.Decay:
+                with self.subTest(mode=mode):
+                    table = LUTInterface()
+                    table.episodes = 3500
+                    table.configure_epsilon(.8, 7000, mode)
+                    table.saveWeights(path)
+                    with np.load(path, allow_pickle=False) as data:
+                        self.assertEqual(data['epsilon_decay_mode'].item(), mode.value)
+                    restored = LUTInterface()
+                    restored.loadWeights(path)
+                    self.assertIs(restored.epsilon_schedule.mode, mode)
+                    restored.decay_epsilon()
+                    self.assertEqual(restored.epsilon, table.epsilon)
+                    # Checkpoints from before Decay stored lowercase strings.
+                    np.savez(path, Q=table.Q, epsilon=table.epsilon,
+                             episodes=3500, epsilon_start=.8,
+                             epsilon_zero_at_battle=7000,
+                             epsilon_decay_mode=mode.value.lower())
+                    restored.loadWeights(path)
+                    self.assertIs(restored.epsilon_schedule.mode, mode)
+                    restored.decay_epsilon()
+                    self.assertEqual(restored.epsilon, table.epsilon)
+
+    def test_bot_converts_environment_decay_to_enum(self):
+        with TemporaryDirectory() as directory:
+            environment = {'CAPPEELER_QTABLE': str(Path(directory) / 'table.npz'),
+                           'CAPPEELER_DIAGNOSTICS': '0'}
+            for setting, expected in ((None, EpsilonSchedule.Decay.kStep),
+                                      ('linear', EpsilonSchedule.Decay.kLinear),
+                                      ('step', EpsilonSchedule.Decay.kStep)):
+                with self.subTest(setting=setting):
+                    options = dict(environment)
+                    if setting is not None:
+                        options['CAPPEELER_EPSILON_DECAY'] = setting
+                    with patch('os.environ', options), \
+                            patch.object(CapPeeler.__bases__[0], '__init__', return_value=None), \
+                            patch.object(CapPeeler, 'set_event_priority'):
+                        bot = CapPeeler(epsilon_zero_at_battle=7000,
+                                        epsilon_decay=EpsilonSchedule.Decay.kStep)
+                    self.assertIs(bot.qtable.epsilon_schedule.mode, expected)
+
+    def test_bot_algorithm_and_reward_mode_enums(self):
+        cases = (
+            ({}, {}, LUTInterface.Algorithm.kQLearning, LUTInterface.RewardMode.kIntermediate),
+            ({}, dict(algorithm=LUTInterface.Algorithm.kSarsa,
+                      reward_mode=LUTInterface.RewardMode.kTerminal),
+             LUTInterface.Algorithm.kSarsa, LUTInterface.RewardMode.kTerminal),
+            ({'CAPPEELER_ALGORITHM': 'SARSA', 'CAPPEELER_REWARDS': 'TERMINAL'}, {},
+             LUTInterface.Algorithm.kSarsa, LUTInterface.RewardMode.kTerminal),
+            ({'CAPPEELER_ALGORITHM': 'qlearning', 'CAPPEELER_REWARDS': 'intermediate'},
+             dict(algorithm=LUTInterface.Algorithm.kSarsa,
+                  reward_mode=LUTInterface.RewardMode.kTerminal),
+             LUTInterface.Algorithm.kQLearning, LUTInterface.RewardMode.kIntermediate),
+        )
+        with TemporaryDirectory() as directory:
+            for overrides, arguments, algorithm, rewards in cases:
+                with self.subTest(overrides=overrides, arguments=arguments):
+                    environment = {'CAPPEELER_QTABLE': str(Path(directory) / 'table.npz'),
+                                   'CAPPEELER_DIAGNOSTICS': '0', **overrides}
+                    with patch('os.environ', environment), \
+                            patch.object(CapPeeler.__bases__[0], '__init__', return_value=None), \
+                            patch.object(CapPeeler, 'set_event_priority'):
+                        bot = CapPeeler(**arguments)
+                    self.assertIs(bot.algorithm, algorithm)
+                    self.assertIs(bot.reward_mode, rewards)
+
+    def test_bot_rejects_invalid_algorithm_and_reward_mode(self):
+        cases = (({'CAPPEELER_ALGORITHM': 'unknown'}, {}),
+                 ({'CAPPEELER_REWARDS': 'unknown'}, {}),
+                 ({}, {'algorithm': 'sarsa'}),
+                 ({}, {'reward_mode': 'terminal'}))
+        for environment, arguments in cases:
+            with self.subTest(environment=environment, arguments=arguments):
+                with patch('os.environ', environment), \
+                        patch.object(CapPeeler.__bases__[0], '__init__', return_value=None):
+                    with self.assertRaises(ValueError):
+                        CapPeeler(**arguments)
+
     def test_schedule_round_boundary_and_resume(self):
         bot = self.bot()
         bot.qtable.episodes = 6999
-        bot.qtable.configure_epsilon(start=.8, zero_at_battle=7000, mode="step")
+        bot.qtable.configure_epsilon(start=.8, zero_at_battle=7000, mode=EpsilonSchedule.Decay.kStep)
         self.assertEqual(bot.qtable.epsilon, .8)
         with TemporaryDirectory() as directory:
             bot.table_path = Path(directory) / 'table.npz'
@@ -181,7 +265,7 @@ class LearningTests(unittest.TestCase):
 
     def test_sarsa_executes_action_used_for_bootstrap(self):
         bot = self.bot()
-        bot.algorithm = 'sarsa'
+        bot.algorithm = LUTInterface.Algorithm.kSarsa
         bot._bot_internals = Event(radar_turn_rate=0)
         bot.qtable.choose_action = Mock(side_effect=[1, 4])
         bot.qtable.update = Mock()
@@ -193,7 +277,7 @@ class LearningTests(unittest.TestCase):
 
     def test_terminal_only_ignores_intermediate_events(self):
         bot = self.bot()
-        bot.reward_mode = 'terminal'
+        bot.reward_mode = LUTInterface.RewardMode.kTerminal
         bot._state = State(100, 0, 20, 20)
         bot.on_bullet_hit(Event())
         bot.on_hit_by_bullet(Event())

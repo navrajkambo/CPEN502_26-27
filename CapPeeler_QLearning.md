@@ -26,8 +26,10 @@ No automatic process restarts or battle-rule changes are made.
 Configure the LUT after loading any saved table:
 
 ```python
-lut.configure_epsilon(start=0.8, zero_at_battle=7000, mode="linear")
-# Or: mode="step" to hold 0.8 through battle 6999, then use 0 at 7000.
+from LUTInterface import EpsilonSchedule
+
+lut.configure_epsilon(start=0.8, zero_at_battle=7000, mode=EpsilonSchedule.Decay.kLinear)
+# Or: mode=EpsilonSchedule.Decay.kStep to hold 0.8 through battle 6999, then use 0 at 7000.
 ```
 
 Battle indices are zero-based. The saved `episodes` count is the index of the
@@ -41,11 +43,14 @@ The schedule and progress are saved by `saveWeights` and restored by `loadWeight
 Increment `lut.episodes` after each training round, then call `lut.decay_epsilon()`;
 CapPeeler already does this. Evaluation does not advance the schedule.
 
-Configure CapPeeler directly in its `main()` function:
+Configure CapPeeler directly in its `main()` function. `Algorithm` and
+`RewardMode` are enums nested inside `LUTInterface` (imported from `LUTInterface`):
 
 ```python
 CapPeeler(epsilon_start=0.8, epsilon_zero_at_battle=7000,
-          epsilon_decay="step").start()
+          epsilon_decay=EpsilonSchedule.Decay.kStep,
+          algorithm=LUTInterface.Algorithm.kSarsa,
+          reward_mode=LUTInterface.RewardMode.kTerminal).start()
 ```
 
 Or set these before launching the GUI (environment settings override constructor

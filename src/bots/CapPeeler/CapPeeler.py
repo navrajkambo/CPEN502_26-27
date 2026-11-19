@@ -10,7 +10,7 @@ import traceback
 SOURCE_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE_DIR))
 
-from LUTInterface import LUTInterface, Action, State
+from LUTInterface import LUTInterface, Action, State, EpsilonSchedule
 from BotDiagnostics import BotDiagnostics
 from robocode_tank_royale.bot_api import Color
 from robocode_tank_royale.bot_api.bot import Bot
@@ -30,46 +30,64 @@ from robocode_tank_royale.bot_api.events import (
     WonRoundEvent,
 )
 
-
 class CapPeeler(Bot):
     ACTION_TICKS = 5
     TARGET_TIMEOUT = 30
 
     def __init__(self, epsilon_start: float = 0.8,
                  epsilon_zero_at_battle: int | None = None,
-                 epsilon_decay: str = "linear"):
+                 epsilon_decay: EpsilonSchedule.Decay = EpsilonSchedule.Decay.kLinear,
+                 algorithm: LUTInterface.Algorithm = LUTInterface.Algorithm.kQLearning,
+                 reward_mode: LUTInterface.RewardMode = LUTInterface.RewardMode.kIntermediate):
         super().__init__()
-        self.training = os.getenv("CAPPEELER_TRAINING", "1") != "0"
-        self.table_path = Path(os.getenv("CAPPEELER_QTABLE", str(SOURCE_DIR.parent / "training" / "cappeeler.npz")))
+
+        # environment variables (for use with stuff outside of python)
+        self.training =         os.getenv("CAPPEELER_TRAINING", "1") != "0"
+        self.table_path =       Path(os.getenv("CAPPEELER_QTABLE", str(SOURCE_DIR.parent / "training" / "cappeeler.npz")))
+        self.algorithm: LUTInterface.Algorithm = (
+            LUTInterface.Algorithm(os.environ["CAPPEELER_ALGORITHM"].lower())
+            if "CAPPEELER_ALGORITHM" in os.environ else algorithm
+        )
+        self.reward_mode: LUTInterface.RewardMode = (
+            LUTInterface.RewardMode(os.environ["CAPPEELER_REWARDS"].lower())
+            if "CAPPEELER_REWARDS" in os.environ else reward_mode
+        )
+        self.fixed_epsilon =    os.getenv("CAPPEELER_EPSILON")
+        seed =                  os.getenv("CAPPEELER_SEED")
+        cutoff =                os.getenv("CAPPEELER_EPSILON_ZERO_AT")
+
         self.metrics_path = self.table_path.with_suffix(".csv")
         self.qtable = LUTInterface()
-        self.algorithm = os.getenv("CAPPEELER_ALGORITHM", "qlearning").lower()
-        self.reward_mode = os.getenv("CAPPEELER_REWARDS", "intermediate").lower()
-        if self.algorithm not in ("qlearning", "sarsa"):
-            raise ValueError("CAPPEELER_ALGORITHM must be qlearning or sarsa")
-        if self.reward_mode not in ("intermediate", "terminal"):
-            raise ValueError("CAPPEELER_REWARDS must be intermediate or terminal")
-        self.fixed_epsilon = os.getenv("CAPPEELER_EPSILON")
+
+        # check environment variables
+        if not isinstance(self.algorithm, LUTInterface.Algorithm):
+            raise ValueError("algorithm must be a LUTInterface.Algorithm")
+
+        if not isinstance(self.reward_mode, LUTInterface.RewardMode):
+            raise ValueError("reward_mode must be a LUTInterface.RewardMode")
+
         if self.fixed_epsilon is not None:
             self.fixed_epsilon = float(self.fixed_epsilon)
             if not 0 <= self.fixed_epsilon <= 1:
                 raise ValueError("CAPPEELER_EPSILON must be in [0, 1]")
-        seed = os.getenv("CAPPEELER_SEED")
+
         if seed is not None:
             import numpy as np
             self.qtable.rng = np.random.default_rng(int(seed))
+
         if self.table_path.exists():
             self.qtable.loadWeights(self.table_path)
         elif not self.training:
             raise FileNotFoundError(f"Train a table before evaluation: {self.table_path}")
-        cutoff = os.getenv("CAPPEELER_EPSILON_ZERO_AT")
+
         if cutoff is not None:
             epsilon_zero_at_battle = int(cutoff)
         if epsilon_zero_at_battle is not None:
             self.qtable.configure_epsilon(
                 start=float(os.getenv("CAPPEELER_EPSILON_START", str(epsilon_start))),
                 zero_at_battle=epsilon_zero_at_battle,
-                mode=os.getenv("CAPPEELER_EPSILON_DECAY", epsilon_decay).lower(),
+                mode=(EpsilonSchedule.Decay(os.environ["CAPPEELER_EPSILON_DECAY"].capitalize())
+                      if "CAPPEELER_EPSILON_DECAY" in os.environ else epsilon_decay),
             )
         if self.fixed_epsilon is not None:
             self.qtable.epsilon = self.fixed_epsilon
@@ -80,7 +98,7 @@ class CapPeeler(Bot):
         if os.getenv("CAPPEELER_DIAGNOSTICS", "1") != "0":
             self.diagnostics = BotDiagnostics(self.table_path.with_suffix(".diagnostics.log"))
 
-    def _reset_episode(self):
+    def _reset_episode(self): # reset state action reward and target between rounds
         self._target = None
         self._state: State | None = None
         self._action = None
@@ -114,15 +132,12 @@ class CapPeeler(Bot):
     def on_scanned_bot(self, e: ScannedBotEvent) -> None:
         if self._outcome is not None or self._finished or self._round_end is not None:
             return
-        if (self._target is None or e.scanned_bot_id == self._target[0]
-                or e.turn_number - self._target[4] > self.TARGET_TIMEOUT):
-            self._target = (e.scanned_bot_id, e.x, e.y,
-                            e.energy, e.turn_number)
+        if (self._target is None or e.scanned_bot_id == self._target[0] or e.turn_number - self._target[4] > self.TARGET_TIMEOUT):
+            self._target = (e.scanned_bot_id, e.x, e.y, e.energy, e.turn_number)
 
     def _observation(self) -> State:
         _, x, y, energy, _ = self._target
-        return State(distance=self.distance_to(x, y), bearing=self.bearing_to(x, y),
-                     own_energy=self.energy, enemy_energy=energy)
+        return State(distance=self.distance_to(x, y), bearing=self.bearing_to(x, y), own_energy=self.energy, enemy_energy=energy)
 
     def on_tick(self, e: TickEvent) -> None:
         if self._outcome is not None or self._finished or self._round_end is not None:
@@ -137,7 +152,7 @@ class CapPeeler(Bot):
         state = self._observation()
         if self._state is None or e.turn_number - self._action_turn >= self.ACTION_TICKS:
             # SARSA must bootstrap from the action actually executed next.
-            sarsa = getattr(self, "algorithm", "qlearning") == "sarsa"
+            sarsa = getattr(self, "algorithm", LUTInterface.Algorithm.kQLearning) == LUTInterface.Algorithm.kSarsa
             next_action = self.qtable.choose_action(state, explore=self.training) if sarsa else None
             if self._state is not None:
                 if self.training:
@@ -174,7 +189,7 @@ class CapPeeler(Bot):
                 self.set_fire(3)
 
     def _add_reward(self, reward: int, terminal: bool = False):
-        if getattr(self, "reward_mode", "intermediate") == "terminal" and not terminal:
+        if getattr(self, "reward_mode", LUTInterface.RewardMode.kIntermediate) == LUTInterface.RewardMode.kTerminal and not terminal:
             return
         if not self._finished:
             self._total_reward += reward
@@ -216,7 +231,7 @@ class CapPeeler(Bot):
 
     def on_round_ended(self, e: RoundEndedEvent) -> None:
         self._heartbeat(f"round {e.round_number} ended; waiting for next round or game end")
-        self._round_end = e # API 1.4.0 flushes final events AFTER this callback returns.
+        self._round_end = e # API 1.4.0 flushes final events AFTER this callback returns. # (ChatGPT)
 
     def on_game_ended(self, e: GameEndedEvent) -> None:
         diagnostics = getattr(self, "diagnostics", None)
@@ -267,9 +282,9 @@ class CapPeeler(Bot):
         if self.training:
             self.qtable.episodes += 1
             if getattr(self, "fixed_epsilon", None) is None:
-                self.qtable.decay_epsilon()
+                self.qtable.decay_epsilon() # decay epsilon when training from
             try:
-                self.qtable.saveWeights(self.table_path)
+                self.qtable.saveWeights(self.table_path) # save table
             except OSError:
                 diagnostics = getattr(self, "diagnostics", None)
                 if diagnostics is not None:
@@ -278,7 +293,7 @@ class CapPeeler(Bot):
                 raise
             self.metrics_path.parent.mkdir(parents=True, exist_ok=True)
             header = not self.metrics_path.exists()
-            with self.metrics_path.open("a", newline="", encoding="utf-8") as stream:
+            with self.metrics_path.open("a", newline="", encoding="utf-8") as stream: # for plotting
                 writer = csv.writer(stream)
                 if header:
                     writer.writerow(("episode", "round", "outcome", "reward",
@@ -294,7 +309,9 @@ def main():
     bot = CapPeeler(
         epsilon_start=0.8,
         epsilon_zero_at_battle=7000,
-        epsilon_decay="linear",  # or "step"
+        epsilon_decay=EpsilonSchedule.Decay.kLinear,  # or EpsilonSchedule.Decay.kStep
+        algorithm=LUTInterface.Algorithm.kQLearning,  # or LUTInterface.Algorithm.kSarsa
+        reward_mode=LUTInterface.RewardMode.kIntermediate,  # or LUTInterface.RewardMode.kTerminal
     )
     try:
         bot.start()

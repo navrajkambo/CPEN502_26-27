@@ -3,7 +3,7 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
-from enum import IntEnum
+from enum import IntEnum, Enum
 from dataclasses import dataclass
 
 from BaseInterface import BaseInterface
@@ -15,6 +15,7 @@ class Action(IntEnum):
     RIGHT = 3
     FIRE = 4
     FACE_ENEMY = 5
+
 
 @dataclass(frozen=True)
 class State: # an observation snapshot, converted to discrete bins only for LUT indexing
@@ -49,36 +50,48 @@ class State: # an observation snapshot, converted to discrete bins only for LUT 
 
 @dataclass(frozen=True)
 class EpsilonSchedule:
+    class Decay(Enum):
+        kLinear = "Linear"
+        kStep = "Step"
+
     start: float
     zero_at_battle: int
-    mode: str = "linear"
+    mode: Decay = Decay.kStep
 
     def __post_init__(self):
+        # check ranges and make sure that decay type is defined
         if not 0 <= self.start <= 1:
             raise ValueError("Starting epsilon must be in [0, 1]")
         if (not isinstance(self.zero_at_battle, (int, np.integer))
                 or isinstance(self.zero_at_battle, bool) or self.zero_at_battle < 0):
             raise ValueError("zero_at_battle must be a nonnegative integer")
-        if self.mode not in ("linear", "step"):
-            raise ValueError("Epsilon decay mode must be linear or step")
+        if not isinstance(self.mode, self.Decay):
+            raise ValueError("Epsilon decay mode must be Linear or Step")
 
     def value(self, battle: int) -> float:
-        if battle >= self.zero_at_battle:
+        if battle >= self.zero_at_battle: # zero epsilon value after max battle
             return 0.0
-        if self.mode == "step":
+        if self.mode == self.Decay.kStep: # keep epsilon constant
             return self.start
-        return self.start * (1 - battle / self.zero_at_battle)
+        return self.start * (1 - battle / self.zero_at_battle) # reduce epsilon proportional to current battle / total battles
 
 class LUTInterface(BaseInterface):
+    class Algorithm(Enum):
+        kQLearning = "qlearning"
+        kSarsa = "sarsa"
+
+    class RewardMode(Enum):
+        kIntermediate = "intermediate"
+        kTerminal = "terminal"
+
     def __init__(self, state_shape: tuple = (3, 4, 3, 3), n_actions: int = 6, alpha: float = 0.1, gamma: float = 0.95, epsilon: float = 1.0, seed=None):
         super().__init__()
         if not all(0 <= value <= 1 for value in (alpha, gamma, epsilon)):
             raise ValueError("alpha, gamma and epsilon must be in [0, 1]")
-        self.alpha, self.gamma, self.epsilon = alpha, gamma, epsilon
+        self.alpha, self.gamma, self.epsilon = alpha, gamma, epsilon # hyper params
         self.rng = np.random.default_rng(seed)
         self.Q = np.zeros((*state_shape, n_actions), dtype=float)
-        # Count training updates, including those with zero TD error.
-        self.update_counts = np.zeros(self.Q.shape, dtype=np.int64)
+        self.update_counts = np.zeros(self.Q.shape, dtype=np.int64) # Count training updates (discussed in lecture)
         self.episodes: int = 0
         self.epsilon_schedule: EpsilonSchedule | None = None
 
@@ -93,7 +106,7 @@ class LUTInterface(BaseInterface):
         values = self.Q[state.to_tuple()] # choose largest value (highest probability)
         return int(self.rng.choice(np.flatnonzero(values == values.max()))) # choose randomly if there is a tie for largest value
 
-    def update(self, state: State, action: Action | int, reward: float, next_state: State | None = None, done: bool = False, next_action: Action | int | None = None) -> float:
+    def update(self, state: State, action: Action | int, reward: int | float, next_state: State | None = None, done: bool = False, next_action: Action | int | None = None) -> float:
         """Q-learning by default; supply the actual next action for SARSA."""
         if not done and next_state is None:
             raise ValueError("next_state is required for a non-terminal update")
@@ -110,33 +123,24 @@ class LUTInterface(BaseInterface):
         self.update_counts[index] += 1
         return td_error
 
-    def configure_epsilon(self, start: float, zero_at_battle: int,
-                          mode: str = "linear") -> None:
-        """Schedule epsilon using the zero-based battle index (completed episodes).
+    def configure_epsilon(self, start: float, zero_at_battle: int, mode: EpsilonSchedule.Decay = EpsilonSchedule.Decay.kLinear) -> None:
+        self.epsilon_schedule = EpsilonSchedule(start, zero_at_battle, mode)
+        self.epsilon = self.epsilon_schedule.value(self.episodes)
 
-        Linear: start * (1 - battle / cutoff). Step: hold start until cutoff.
-        Both remain exactly zero at and after the cutoff. Resumes use the saved
-        episode count, rather than restarting the schedule.
-        """
-        schedule = EpsilonSchedule(start, zero_at_battle, mode)
-        self.epsilon_schedule = schedule
-        self.epsilon = schedule.value(self.episodes)
+    def decay_epsilon(self) -> None:
+        self.epsilon = self.epsilon_schedule.value(self.episodes)
 
-    def decay_epsilon(self, decay: float = 0.995, minimum: float = 0.05) -> None:
-        if self.epsilon_schedule is not None:
-            self.epsilon = self.epsilon_schedule.value(self.episodes)
-        else:
-            self.epsilon = max(minimum, self.epsilon * decay)
+####################################### CHATGPT METHODS BELOW ###################################################################
 
     def saveWeights(self, filename: str = "weights.npz") -> None:
-        # Save Q-values, update counts, exploration rate and completed episodes.
+        # save Q-values, update counts,  exploration rate and completed training episodes (ChatGPT)
         path = Path(filename)
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
         schedule_data = {} if self.epsilon_schedule is None else {
             "epsilon_start": self.epsilon_schedule.start,
             "epsilon_zero_at_battle": self.epsilon_schedule.zero_at_battle,
-            "epsilon_decay_mode": self.epsilon_schedule.mode,
+            "epsilon_decay_mode": self.epsilon_schedule.mode.value,
         }
         with temporary.open("wb") as stream:
             np.savez_compressed(stream, Q=self.Q, update_counts=self.update_counts,
@@ -155,7 +159,7 @@ class LUTInterface(BaseInterface):
                 time.sleep(0.05 * 2 ** attempt)
 
     def loadWeights(self, filename: str = "weights.npz") -> None:
-        # load training state, validating it before replacing the current table
+        # load training state, validating it before replacing the current table (ChatGPT)
         with np.load(filename, allow_pickle=False) as data:
             values = np.array(data["Q"], dtype=float, copy=True)
             epsilon = float(data["epsilon"])
@@ -166,7 +170,7 @@ class LUTInterface(BaseInterface):
                       if "update_counts" in data else np.zeros(values.shape, dtype=np.int64))
             schedule = (EpsilonSchedule(float(data["epsilon_start"]),
                                         data["epsilon_zero_at_battle"].item(),
-                                        str(data["epsilon_decay_mode"].item()))
+                                        EpsilonSchedule.Decay(str(data["epsilon_decay_mode"].item()).capitalize()))
                         if "epsilon_zero_at_battle" in data else None)
         if values.shape != self.Q.shape or not np.isfinite(values).all():
             raise ValueError("Saved Q-table has incompatible shape or invalid values")
@@ -179,8 +183,7 @@ class LUTInterface(BaseInterface):
         self.update_counts = counts.astype(np.int64)
         self.epsilon_schedule = schedule
 
-    def plotLearningPerformance(self, filename: str, window: int = 50,
-                                output_path: str | None = None, show: bool = False) -> tuple:
+    def plotLearningPerformance(self, filename: str, window: int = 50, output_path: str | None = None, show: bool = False) -> tuple: # CHATGPT
         """Plot training rewards, win rate and epsilon from the round history.
 
         Rolling statistics include up to `window` rounds, including the current

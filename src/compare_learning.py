@@ -1,4 +1,5 @@
 """Compare measured battle histories, e.g. --run Q-learning=q.csv --run SARSA=s.csv."""
+## CHATGPT compare learning between SARSA and Q-Learning
 import argparse
 import csv
 from pathlib import Path

@@ -1,4 +1,4 @@
-"""Record bot progress and thread stacks when game ticks stop arriving."""
+## CHATGPT (diagnostics for debugging freezing issue with robocode)
 import faulthandler
 from pathlib import Path
 import threading

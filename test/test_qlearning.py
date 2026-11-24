@@ -120,60 +120,59 @@ class LearningTests(unittest.TestCase):
                     restored.decay_epsilon()
                     self.assertEqual(restored.epsilon, table.epsilon)
 
-    def test_bot_converts_environment_decay_to_enum(self):
-        with TemporaryDirectory() as directory:
-            environment = {'CAPPEELER_QTABLE': str(Path(directory) / 'table.npz'),
-                           'CAPPEELER_DIAGNOSTICS': '0'}
-            for setting, expected in ((None, EpsilonSchedule.Decay.kStep),
-                                      ('linear', EpsilonSchedule.Decay.kLinear),
-                                      ('step', EpsilonSchedule.Decay.kStep)):
-                with self.subTest(setting=setting):
-                    options = dict(environment)
-                    if setting is not None:
-                        options['CAPPEELER_EPSILON_DECAY'] = setting
-                    with patch('os.environ', options), \
-                            patch.object(CapPeeler.__bases__[0], '__init__', return_value=None), \
-                            patch.object(CapPeeler, 'set_event_priority'):
-                        bot = CapPeeler(epsilon_zero_at_battle=7000,
-                                        epsilon_decay=EpsilonSchedule.Decay.kStep)
-                    self.assertIs(bot.qtable.epsilon_schedule.mode, expected)
+    def make_configured_bot(self, **arguments):
+        with patch.object(CapPeeler.__bases__[0], '__init__', return_value=None), \
+                patch.object(CapPeeler, 'set_event_priority'):
+            return CapPeeler(diagnostics_enabled=False, **arguments)
 
-    def test_bot_algorithm_and_reward_mode_enums(self):
-        cases = (
-            ({}, {}, LUTInterface.Algorithm.kQLearning, LUTInterface.RewardMode.kIntermediate),
-            ({}, dict(algorithm=LUTInterface.Algorithm.kSarsa,
-                      reward_mode=LUTInterface.RewardMode.kTerminal),
-             LUTInterface.Algorithm.kSarsa, LUTInterface.RewardMode.kTerminal),
-            ({'CAPPEELER_ALGORITHM': 'SARSA', 'CAPPEELER_REWARDS': 'TERMINAL'}, {},
-             LUTInterface.Algorithm.kSarsa, LUTInterface.RewardMode.kTerminal),
-            ({'CAPPEELER_ALGORITHM': 'qlearning', 'CAPPEELER_REWARDS': 'intermediate'},
-             dict(algorithm=LUTInterface.Algorithm.kSarsa,
-                  reward_mode=LUTInterface.RewardMode.kTerminal),
-             LUTInterface.Algorithm.kQLearning, LUTInterface.RewardMode.kIntermediate),
-        )
+    def test_bot_uses_parameter_settings(self):
         with TemporaryDirectory() as directory:
-            for overrides, arguments, algorithm, rewards in cases:
-                with self.subTest(overrides=overrides, arguments=arguments):
-                    environment = {'CAPPEELER_QTABLE': str(Path(directory) / 'table.npz'),
-                                   'CAPPEELER_DIAGNOSTICS': '0', **overrides}
-                    with patch('os.environ', environment), \
-                            patch.object(CapPeeler.__bases__[0], '__init__', return_value=None), \
-                            patch.object(CapPeeler, 'set_event_priority'):
-                        bot = CapPeeler(**arguments)
-                    self.assertIs(bot.algorithm, algorithm)
-                    self.assertIs(bot.reward_mode, rewards)
+            path = Path(directory) / 'table.npz'
+            bot = self.make_configured_bot(
+                table_path=path, epsilon_start=.25, epsilon_zero_at_battle=7000,
+                epsilon_decay=EpsilonSchedule.Decay.kStep,
+                algorithm=LUTInterface.Algorithm.kSarsa,
+                reward_mode=LUTInterface.RewardMode.kTerminal, seed=42)
+            self.assertEqual(bot.table_path, path)
+            self.assertEqual(bot.metrics_path, path.with_suffix('.csv'))
+            self.assertTrue(bot.training)
+            self.assertIsNone(bot.diagnostics)
+            self.assertIs(bot.algorithm, LUTInterface.Algorithm.kSarsa)
+            self.assertIs(bot.reward_mode, LUTInterface.RewardMode.kTerminal)
+            self.assertIs(bot.qtable.epsilon_schedule.mode, EpsilonSchedule.Decay.kStep)
+            self.assertEqual(bot.qtable.epsilon, .25)
+            expected = LUTInterface(seed=42)
+            self.assertEqual(bot.qtable.rng.random(), expected.rng.random())
+
+    def test_bot_resumes_saved_schedule_and_can_override_cutoff(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'table.npz'
+            table = LUTInterface()
+            table.episodes = 3500
+            table.configure_epsilon(.5, 7000, EpsilonSchedule.Decay.kLinear)
+            table.saveWeights(path)
+            bot = self.make_configured_bot(table_path=path)
+            self.assertEqual(bot.qtable.epsilon, .25)
+            self.assertIs(bot.qtable.epsilon_schedule.mode, EpsilonSchedule.Decay.kLinear)
+            bot = self.make_configured_bot(table_path=path, epsilon_start=.75,
+                                          epsilon_zero_at_battle=7000,
+                                          epsilon_decay=EpsilonSchedule.Decay.kStep)
+            self.assertEqual(bot.qtable.epsilon, .75)
+
+    def test_bot_evaluation_parameter_requires_existing_table(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'table.npz'
+            with self.assertRaises(FileNotFoundError):
+                self.make_configured_bot(table_path=path, training=False)
+            LUTInterface().saveWeights(path)
+            bot = self.make_configured_bot(table_path=path, training=False)
+            self.assertFalse(bot.training)
 
     def test_bot_rejects_invalid_algorithm_and_reward_mode(self):
-        cases = (({'CAPPEELER_ALGORITHM': 'unknown'}, {}),
-                 ({'CAPPEELER_REWARDS': 'unknown'}, {}),
-                 ({}, {'algorithm': 'sarsa'}),
-                 ({}, {'reward_mode': 'terminal'}))
-        for environment, arguments in cases:
-            with self.subTest(environment=environment, arguments=arguments):
-                with patch('os.environ', environment), \
-                        patch.object(CapPeeler.__bases__[0], '__init__', return_value=None):
-                    with self.assertRaises(ValueError):
-                        CapPeeler(**arguments)
+        for arguments in ({'algorithm': 'sarsa'}, {'reward_mode': 'terminal'}):
+            with self.subTest(arguments=arguments):
+                with self.assertRaises(ValueError):
+                    self.make_configured_bot(**arguments)
 
     def test_schedule_round_boundary_and_resume(self):
         bot = self.bot()
@@ -290,7 +289,6 @@ class LearningTests(unittest.TestCase):
 
     def test_fixed_zero_exploration_survives_round_end(self):
         bot = self.bot()
-        bot.fixed_epsilon = 0.0
         with TemporaryDirectory() as directory:
             bot.table_path = Path(directory) / 'table.npz'
             bot.metrics_path = Path(directory) / 'table.csv'
@@ -378,6 +376,7 @@ class LearningTests(unittest.TestCase):
         bot = object.__new__(CapPeeler)
         bot.qtable = LUTInterface(epsilon=0, seed=42)
         bot.training = True
+        bot.algorithm = LUTInterface.Algorithm.kQLearning
         bot._reset_episode()
         bot._observation = Mock(return_value=State(100, 0, 20, 20))
         bot._execute_action = Mock()

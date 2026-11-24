@@ -97,8 +97,7 @@ class LUTInterface(BaseInterface):
 
     @property
     def state_update_counts(self) -> np.ndarray:
-        """Total updates to each state row, summed over its actions."""
-        return self.update_counts.sum(axis=-1)
+        return self.update_counts.sum(axis=-1) # used for part 3 - remove under-visited states
 
     def choose_action(self, state: State, explore: bool = True) -> int:
         if explore and (self.rng.random() < self.epsilon): # if epsilon > random number between (0,1) (epsilon is percentage of random exploratory moves)
@@ -128,7 +127,8 @@ class LUTInterface(BaseInterface):
         self.epsilon = self.epsilon_schedule.value(self.episodes)
 
     def decay_epsilon(self) -> None:
-        self.epsilon = self.epsilon_schedule.value(self.episodes)
+        if self.epsilon_schedule is not None:
+            self.epsilon = self.epsilon_schedule.value(self.episodes)
 
 ####################################### CHATGPT METHODS BELOW ###################################################################
 

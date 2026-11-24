@@ -16,7 +16,7 @@ CapPeeler records lifecycle information in `training/sarsa/cappeeler.diagnostics
 seconds, a background watchdog writes all Python thread stacks once for that
 stall. It does no disk I/O on the normal per-tick path. An intentional pause
 can also trigger this diagnostic; it is evidence to inspect, not a diagnosis.
-Restart the bot after code changes. `CAPPEELER_DIAGNOSTICS=0` disables the watchdog.
+Restart the bot after code changes. `diagnostics_enabled=False` disables the watchdog.
 The plot subprocess has separate input/output handles and sends errors to
 `training/sarsa/cappeeler.plot.log`, so an open plot cannot retain the booter's pipes.
 No automatic process restarts or battle-rule changes are made.
@@ -53,19 +53,23 @@ CapPeeler(epsilon_start=0.8, epsilon_zero_at_battle=7000,
           reward_mode=LUTInterface.RewardMode.kTerminal).start()
 ```
 
-Or set these before launching the GUI (environment settings override constructor
-arguments):
+All robot settings are supplied as arguments to `CapPeeler(...)` in `main()`:
 
-```powershell
-$env:CAPPEELER_EPSILON_START = '0.8'
-$env:CAPPEELER_EPSILON_ZERO_AT = '7000'
-$env:CAPPEELER_EPSILON_DECAY = 'linear'  # or 'step'
-Remove-Item Env:CAPPEELER_EPSILON -ErrorAction SilentlyContinue
-```
+| Parameter | Purpose |
+| --- | --- |
+| `epsilon_start` | Initial exploration probability; use 0 for no exploration |
+| `epsilon_zero_at_battle` | Round cutoff for exploration; 0 disables it immediately |
+| `epsilon_decay` | `EpsilonSchedule.Decay.kLinear` or `.kStep` |
+| `algorithm` | `LUTInterface.Algorithm.kQLearning` or `.kSarsa` |
+| `reward_mode` | `LUTInterface.RewardMode.kIntermediate` or `.kTerminal` |
+| `training` | `True` to learn and save; `False` for greedy evaluation |
+| `table_path` | Checkpoint filename; CSV and diagnostic logs use the same stem |
+| `seed` | Optional integer seed for action selection |
+| `diagnostics_enabled` | Enable or disable the watchdog |
 
-`CAPPEELER_EPSILON` remains a fixed-value override with highest priority.
-Without an explicit cutoff, the saved schedule resumes automatically; if no
-schedule was saved, the previous exponential decay remains in use. Existing
+Without an explicit cutoff, a saved schedule resumes automatically. A fresh
+LUT without a schedule holds `epsilon_start` constant, including zero.
+Existing
 tables past episode 7000 immediately use zero when configured with that cutoff.
 Use a new table path to start at battle 0. The CSV still records epsilon after
 each completed round (the value for the next battle), with one-based episode
@@ -214,8 +218,8 @@ tables and subsequent trajectories can still produce different results.
 | Death | -100 | -100 |
 | Draw terminal bonus | 0 | 0 |
 
-Set `reward_mode=LUTInterface.RewardMode.kTerminal` or
-`CAPPEELER_REWARDS=terminal` to enable terminal-only rewards. Intermediate
+Set `reward_mode=LUTInterface.RewardMode.kTerminal` in `main()` to enable
+terminal-only rewards. Intermediate
 transitions still perform TD updates, with zero immediate reward in that mode.
 Terminal rewards can therefore propagate back through earlier transitions.
 
@@ -336,7 +340,7 @@ The algorithm follows the Q-learning algorithm discussed in the lecture notes:
 Terminal transitions use reward alone. The LUT defaults to alpha=0.1 and
 gamma=0.95. The current bot launcher selects SARSA with intermediate rewards
 and a linear epsilon schedule starting at 0.95 and reaching zero after 7,000
-rounds; constructor arguments and environment overrides can change these settings.
+rounds; constructor arguments in `main()` control these settings.
 Greedy action selection breaks ties randomly.
 
 `src/LUTInterface.py` implements Q-learning, the `State` dataclass, six actions,
@@ -384,12 +388,12 @@ Training outputs (saved at the next round start or game end):
 - `training/sarsa/cappeeler.csv`: episode reward, outcome, turns, action count and
   epsilon. Compute win rate and average reward across a window of these rows.
 
-To evaluate, set `CAPPEELER_TRAINING=0` in the environment **before starting the
-GUI/bot process**. Evaluation chooses greedy actions and does not update Q-values,
-decay epsilon or write training files. Training is enabled by default.
-`CAPPEELER_QTABLE` overrides the table location (use an absolute path); the CSV
-uses the same filename stem. Use a new filename to start fresh. Run one training
-CapPeeler process per table path to avoid concurrent writes.
+To evaluate, set `training=False` in the `CapPeeler(...)` call in `main()`.
+Evaluation chooses greedy actions and does not update Q-values, advance the
+epsilon schedule, or write training files. Training is enabled by default.
+Set `table_path` to choose a checkpoint; the CSV uses the same filename stem.
+Use a new filename to start fresh. Run one training CapPeeler process per table
+path to avoid concurrent writes. `seed` controls action selection randomness.
 
 Run the focused checks from the repository root:
 

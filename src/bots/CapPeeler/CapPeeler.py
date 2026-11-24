@@ -30,6 +30,8 @@ from robocode_tank_royale.bot_api.events import (
     WonRoundEvent,
 )
 
+# https://robocode.dev/api/python/api/bot_api.html (events from here)
+
 class CapPeeler(Bot):
     ACTION_TICKS = 5
     TARGET_TIMEOUT = 30
@@ -38,64 +40,43 @@ class CapPeeler(Bot):
                  epsilon_zero_at_battle: int | None = None,
                  epsilon_decay: EpsilonSchedule.Decay = EpsilonSchedule.Decay.kLinear,
                  algorithm: LUTInterface.Algorithm = LUTInterface.Algorithm.kQLearning,
-                 reward_mode: LUTInterface.RewardMode = LUTInterface.RewardMode.kIntermediate):
+                 reward_mode: LUTInterface.RewardMode = LUTInterface.RewardMode.kIntermediate,
+                 training: bool = True,
+                 table_path: str | Path | None = None,
+                 seed: int | None = None,
+                 diagnostics_enabled: bool = True):
         super().__init__()
 
-        # environment variables (for use with stuff outside of python)
-        self.training =         os.getenv("CAPPEELER_TRAINING", "1") != "0"
-        self.table_path =       Path(os.getenv("CAPPEELER_QTABLE", str(SOURCE_DIR.parent / "training" / "cappeeler.npz")))
-        self.algorithm: LUTInterface.Algorithm = (
-            LUTInterface.Algorithm(os.environ["CAPPEELER_ALGORITHM"].lower())
-            if "CAPPEELER_ALGORITHM" in os.environ else algorithm
-        )
-        self.reward_mode: LUTInterface.RewardMode = (
-            LUTInterface.RewardMode(os.environ["CAPPEELER_REWARDS"].lower())
-            if "CAPPEELER_REWARDS" in os.environ else reward_mode
-        )
-        self.fixed_epsilon =    os.getenv("CAPPEELER_EPSILON")
-        seed =                  os.getenv("CAPPEELER_SEED")
-        cutoff =                os.getenv("CAPPEELER_EPSILON_ZERO_AT")
-
+        self.training = training
+        self.table_path = Path(table_path) if table_path is not None else SOURCE_DIR.parent / "training" / "cappeeler.npz"
+        self.algorithm = algorithm
+        self.reward_mode = reward_mode
         self.metrics_path = self.table_path.with_suffix(".csv")
-        self.qtable = LUTInterface()
+        self.qtable = LUTInterface(epsilon=epsilon_start, seed=seed)
 
-        # check environment variables
+        # Settings come directly from the parameters supplied in main().
         if not isinstance(self.algorithm, LUTInterface.Algorithm):
             raise ValueError("algorithm must be a LUTInterface.Algorithm")
 
         if not isinstance(self.reward_mode, LUTInterface.RewardMode):
             raise ValueError("reward_mode must be a LUTInterface.RewardMode")
 
-        if self.fixed_epsilon is not None:
-            self.fixed_epsilon = float(self.fixed_epsilon)
-            if not 0 <= self.fixed_epsilon <= 1:
-                raise ValueError("CAPPEELER_EPSILON must be in [0, 1]")
-
-        if seed is not None:
-            import numpy as np
-            self.qtable.rng = np.random.default_rng(int(seed))
-
         if self.table_path.exists():
             self.qtable.loadWeights(self.table_path)
         elif not self.training:
             raise FileNotFoundError(f"Train a table before evaluation: {self.table_path}")
 
-        if cutoff is not None:
-            epsilon_zero_at_battle = int(cutoff)
         if epsilon_zero_at_battle is not None:
             self.qtable.configure_epsilon(
-                start=float(os.getenv("CAPPEELER_EPSILON_START", str(epsilon_start))),
+                start=epsilon_start,
                 zero_at_battle=epsilon_zero_at_battle,
-                mode=(EpsilonSchedule.Decay(os.environ["CAPPEELER_EPSILON_DECAY"].capitalize())
-                      if "CAPPEELER_EPSILON_DECAY" in os.environ else epsilon_decay),
+                mode=epsilon_decay,
             )
-        if self.fixed_epsilon is not None:
-            self.qtable.epsilon = self.fixed_epsilon
         # Process scans, damage and death before each learning decision.
         self.set_event_priority(TickEvent, 0)
         self._reset_episode()
         self.diagnostics = None
-        if os.getenv("CAPPEELER_DIAGNOSTICS", "1") != "0":
+        if diagnostics_enabled:
             self.diagnostics = BotDiagnostics(self.table_path.with_suffix(".diagnostics.log"))
 
     def _reset_episode(self): # reset state action reward and target between rounds
@@ -149,10 +130,10 @@ class CapPeeler(Bot):
             self.turn_rate = 0
             self.set_fire(0)
             return
-        state = self._observation()
+        state = self._observation() # current state, while self._state is the previous state
         if self._state is None or e.turn_number - self._action_turn >= self.ACTION_TICKS:
             # SARSA must bootstrap from the action actually executed next.
-            sarsa = getattr(self, "algorithm", LUTInterface.Algorithm.kQLearning) == LUTInterface.Algorithm.kSarsa
+            sarsa = self.algorithm is LUTInterface.Algorithm.kSarsa
             next_action = self.qtable.choose_action(state, explore=self.training) if sarsa else None
             if self._state is not None:
                 if self.training:
@@ -281,8 +262,7 @@ class CapPeeler(Bot):
         self._finished = True
         if self.training:
             self.qtable.episodes += 1
-            if getattr(self, "fixed_epsilon", None) is None:
-                self.qtable.decay_epsilon() # decay epsilon when training from
+            self.qtable.decay_epsilon()
             try:
                 self.qtable.saveWeights(self.table_path) # save table
             except OSError:
@@ -307,11 +287,15 @@ class CapPeeler(Bot):
 
 def main():
     bot = CapPeeler(
-        epsilon_start=0.8,
+        epsilon_start=0.95,
         epsilon_zero_at_battle=7000,
         epsilon_decay=EpsilonSchedule.Decay.kLinear,  # or EpsilonSchedule.Decay.kStep
-        algorithm=LUTInterface.Algorithm.kQLearning,  # or LUTInterface.Algorithm.kSarsa
+        algorithm=LUTInterface.Algorithm.kSarsa,  # or LUTInterface.Algorithm.kSarsa
         reward_mode=LUTInterface.RewardMode.kIntermediate,  # or LUTInterface.RewardMode.kTerminal
+        training=True,  # False for greedy evaluation without learning or saving
+        table_path=SOURCE_DIR.parent / "training" / "cappeeler.npz",
+        seed=None,
+        diagnostics_enabled=True,
     )
     try:
         bot.start()

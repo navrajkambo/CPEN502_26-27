@@ -1,0 +1,177 @@
+{
+  "Q-learning": {
+    "source": "training/qlearning/cappeeler.csv",
+    "epsilon_start": 0.95,
+    "epsilon_schedule": "Linear",
+    "first_500": {
+      "rounds": 500,
+      "win_rate_percent": 11.0,
+      "mean_reward": -117.5,
+      "mean_turns": 279.738
+    },
+    "exploration_1_7000": {
+      "rounds": 7000,
+      "win_rate_percent": 34.25714285714286,
+      "mean_reward": -59.18857142857143,
+      "mean_turns": 282.0957142857143
+    },
+    "greedy_7001_10000": {
+      "rounds": 3000,
+      "win_rate_percent": 90.66666666666666,
+      "mean_reward": 120.537,
+      "mean_turns": 182.65166666666667
+    },
+    "final_500": {
+      "rounds": 500,
+      "win_rate_percent": 92.0,
+      "mean_reward": 124.3,
+      "mean_turns": 181.786
+    },
+    "preceding_500": {
+      "rounds": 500,
+      "win_rate_percent": 92.4,
+      "mean_reward": 124.28,
+      "mean_turns": 183.51
+    }
+  },
+  "SARSA": {
+    "source": "training/sarsa/cappeeler.csv",
+    "epsilon_start": 0.95,
+    "epsilon_schedule": "Linear",
+    "first_500": {
+      "rounds": 500,
+      "win_rate_percent": 11.0,
+      "mean_reward": -118.636,
+      "mean_turns": 286.25
+    },
+    "exploration_1_7000": {
+      "rounds": 7000,
+      "win_rate_percent": 34.62857142857143,
+      "mean_reward": -58.946285714285715,
+      "mean_turns": 277.0107142857143
+    },
+    "greedy_7001_10000": {
+      "rounds": 3000,
+      "win_rate_percent": 96.06666666666666,
+      "mean_reward": 123.86,
+      "mean_turns": 207.782
+    },
+    "final_500": {
+      "rounds": 500,
+      "win_rate_percent": 97.8,
+      "mean_reward": 128.37,
+      "mean_turns": 206.84
+    },
+    "preceding_500": {
+      "rounds": 500,
+      "win_rate_percent": 98.8,
+      "mean_reward": 133.01,
+      "mean_turns": 204.922
+    }
+  },
+  "epsilon = 0.25": {
+    "source": "training/0.25 epsilon/cappeeler.csv",
+    "epsilon_start": 0.25,
+    "epsilon_schedule": "Step",
+    "first_500": {
+      "rounds": 500,
+      "win_rate_percent": 49.6,
+      "mean_reward": -11.356,
+      "mean_turns": 282.326
+    },
+    "exploration_1_7000": {
+      "rounds": 7000,
+      "win_rate_percent": 55.557142857142864,
+      "mean_reward": -4.912285714285714,
+      "mean_turns": 289.80285714285714
+    },
+    "greedy_7001_10000": {
+      "rounds": 3000,
+      "win_rate_percent": 95.83333333333334,
+      "mean_reward": 123.19933333333333,
+      "mean_turns": 206.41733333333335
+    },
+    "final_500": {
+      "rounds": 500,
+      "win_rate_percent": 98.6,
+      "mean_reward": 129.78,
+      "mean_turns": 206.922
+    },
+    "preceding_500": {
+      "rounds": 500,
+      "win_rate_percent": 98.4,
+      "mean_reward": 131.0,
+      "mean_turns": 207.664
+    }
+  },
+  "epsilon = 0.50": {
+    "source": "training/0.5 epsilon/cappeeler.csv",
+    "epsilon_start": 0.5,
+    "epsilon_schedule": "Step",
+    "first_500": {
+      "rounds": 500,
+      "win_rate_percent": 25.6,
+      "mean_reward": -80.9,
+      "mean_turns": 288.292
+    },
+    "exploration_1_7000": {
+      "rounds": 7000,
+      "win_rate_percent": 21.21428571428571,
+      "mean_reward": -98.42728571428572,
+      "mean_turns": 301.0702857142857
+    },
+    "greedy_7001_10000": {
+      "rounds": 3000,
+      "win_rate_percent": 92.9,
+      "mean_reward": 114.858,
+      "mean_turns": 208.56866666666667
+    },
+    "final_500": {
+      "rounds": 500,
+      "win_rate_percent": 93.8,
+      "mean_reward": 121.32,
+      "mean_turns": 208.3
+    },
+    "preceding_500": {
+      "rounds": 500,
+      "win_rate_percent": 94.0,
+      "mean_reward": 120.82,
+      "mean_turns": 206.876
+    }
+  },
+  "epsilon = 0.75": {
+    "source": "training/0.75 epsilon/cappeeler.csv",
+    "epsilon_start": 0.75,
+    "epsilon_schedule": "Step",
+    "first_500": {
+      "rounds": 500,
+      "win_rate_percent": 9.6,
+      "mean_reward": -122.802,
+      "mean_turns": 290.914
+    },
+    "exploration_1_7000": {
+      "rounds": 7000,
+      "win_rate_percent": 11.885714285714286,
+      "mean_reward": -119.322,
+      "mean_turns": 288.7885714285714
+    },
+    "greedy_7001_10000": {
+      "rounds": 3000,
+      "win_rate_percent": 93.86666666666666,
+      "mean_reward": 120.16,
+      "mean_turns": 208.12466666666666
+    },
+    "final_500": {
+      "rounds": 500,
+      "win_rate_percent": 92.80000000000001,
+      "mean_reward": 118.26,
+      "mean_turns": 205.15
+    },
+    "preceding_500": {
+      "rounds": 500,
+      "win_rate_percent": 94.19999999999999,
+      "mean_reward": 119.73,
+      "mean_turns": 209.2
+    }
+  }
+}

@@ -44,7 +44,9 @@ class CapPeeler(Bot):
                  training: bool = True,
                  table_path: str | Path | None = None,
                  seed: int | None = None,
-                 diagnostics_enabled: bool = True):
+                 diagnostics_enabled: bool = True,
+                 epsilon_perf_interval: int = 200,
+                 epsilon_perf_rounds: int = 10):
         super().__init__()
 
         self.training = training
@@ -73,7 +75,13 @@ class CapPeeler(Bot):
                 start=epsilon_start,
                 zero_at_battle=epsilon_zero_at_battle,
                 mode=epsilon_decay,
+                perf_interval=epsilon_perf_interval,
+                perf_rounds=epsilon_perf_rounds,
             )
+        elif (epsilon_decay == EpsilonSchedule.Decay.kLinearPerf
+              and (self.qtable.epsilon_schedule is None
+                   or self.qtable.epsilon_schedule.mode != EpsilonSchedule.Decay.kLinearPerf)):
+            raise ValueError("kLinearPerf requires epsilon_zero_at_battle or a saved kLinearPerf schedule")
         # Process scans, damage and death before each learning decision.
         self.set_event_priority(TickEvent, 0)
         self._reset_episode()

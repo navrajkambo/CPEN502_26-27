@@ -173,5 +173,75 @@
       "mean_reward": 119.73,
       "mean_turns": 209.2
     }
+  },
+  "epsilon = 0": {
+    "source": "training/0 epsilon/cappeeler.csv",
+    "epsilon_start": 0.0,
+    "epsilon_schedule": "Linear",
+    "first_500": {
+      "rounds": 500,
+      "win_rate_percent": 77.60000000000001,
+      "mean_reward": 55.422,
+      "mean_turns": 273.712
+    },
+    "exploration_1_7000": {
+      "rounds": 7000,
+      "win_rate_percent": 91.31428571428572,
+      "mean_reward": 98.37085714285715,
+      "mean_turns": 262.558
+    },
+    "greedy_7001_10000": {
+      "rounds": 3000,
+      "win_rate_percent": 94.1,
+      "mean_reward": 105.971,
+      "mean_turns": 261.511
+    },
+    "final_500": {
+      "rounds": 500,
+      "win_rate_percent": 95.19999999999999,
+      "mean_reward": 108.136,
+      "mean_turns": 261.468
+    },
+    "preceding_500": {
+      "rounds": 500,
+      "win_rate_percent": 93.8,
+      "mean_reward": 105.31,
+      "mean_turns": 260.698
+    }
+  },
+  "Terminal-only Q-learning": {
+    "source": "training/terminal/cappeeler.csv",
+    "epsilon_start": 0.95,
+    "epsilon_schedule": "Linear",
+    "first_500": {
+      "rounds": 500,
+      "win_rate_percent": 10.4,
+      "mean_reward": -79.2,
+      "mean_turns": 283.01
+    },
+    "exploration_1_7000": {
+      "rounds": 7000,
+      "win_rate_percent": 21.571428571428573,
+      "mean_reward": -56.857142857142854,
+      "mean_turns": 306.9424285714286
+    },
+    "greedy_7001_10000": {
+      "rounds": 3000,
+      "win_rate_percent": 89.73333333333333,
+      "mean_reward": 79.46666666666667,
+      "mean_turns": 219.437
+    },
+    "final_500": {
+      "rounds": 500,
+      "win_rate_percent": 93.60000000000001,
+      "mean_reward": 87.2,
+      "mean_turns": 218.722
+    },
+    "preceding_500": {
+      "rounds": 500,
+      "win_rate_percent": 91.4,
+      "mean_reward": 82.8,
+      "mean_turns": 216.12
+    }
   }
 }

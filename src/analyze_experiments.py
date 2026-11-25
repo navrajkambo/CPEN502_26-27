@@ -1,4 +1,4 @@
-"""Reproduce assignment comparison figures from the five completed battle runs."""
+"""Reproduce assignment comparison figures from the completed battle runs."""
 import csv
 import json
 from pathlib import Path
@@ -15,7 +15,7 @@ WINDOW = 200
 CUTOFF = 7000
 RUNS = {'Q-learning': 'qlearning', 'SARSA': 'sarsa',
         'epsilon = 0.25': '0.25 epsilon', 'epsilon = 0.50': '0.5 epsilon',
-        'epsilon = 0.75': '0.75 epsilon'}
+        'epsilon = 0.75': '0.75 epsilon', 'epsilon = 0': '0 epsilon'}
 
 
 def load(folder):
@@ -68,7 +68,6 @@ def curves(histories, labels, filename, title):
         axis.set_xlim(1, 10000)
     axes[0].set(ylabel=f'Win rate (%)\nLast {WINDOW} rounds', ylim=(0, 103))
     axes[0].legend(loc='upper left')
-    axes[0].text(8500, 5, 'Greedy actions; learning continues', ha='center', fontsize=9)
     axes[1].set_ylabel(f'Mean reward\nLast {WINDOW} rounds')
     axes[2].set(ylabel='Epsilon used', ylim=(-.02, 1.02), xlabel='Completed training rounds')
     fig.savefig(OUTPUT / filename, dpi=160)
@@ -82,15 +81,40 @@ def metrics(run, selection):
             'mean_turns': float(np.mean(run['turns'][selection]))}
 
 
+def reward_mode_comparison(intermediate, terminal):
+    """Plot matched epsilon schedules; reward values are intentionally omitted."""
+    fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True,
+                             gridspec_kw={'height_ratios': [2, 1]},
+                             constrained_layout=True)
+    for label, run in [('Intermediate rewards (Q-learning)', intermediate),
+                       ('Terminal-only rewards', terminal)]:
+        x = run['episodes'][WINDOW - 1:]
+        axes[0].plot(x, 100 * mean_curve(run['wins']), label=label)
+        axes[1].plot(run['episodes'], run['epsilon'], drawstyle='steps-post', label=label)
+    axes[0].axvline(CUTOFF + .5, color='#555555', linestyle='--', linewidth=1)
+    axes[0].axvspan(CUTOFF + .5, 10000, color='#e6f1e7', alpha=.65)
+    axes[0].set(ylabel=f'Win rate (%)\nLast {WINDOW} rounds', ylim=(0, 103),
+                title='Intermediate vs terminal-only rewards')
+    axes[0].legend(loc='upper left')
+    axes[0].grid(alpha=.2)
+    axes[1].set(ylabel='Epsilon used', ylim=(-.02, 1.02), xlabel='Completed training rounds')
+    axes[1].grid(alpha=.2)
+    axes[1].set_xlim(1, 10000)
+    fig.savefig(OUTPUT / 'reward_mode_comparison.png', dpi=160)
+    plt.close(fig)
+
+
 def main():
     OUTPUT.mkdir(parents=True, exist_ok=True)
     histories = {label: load(folder) for label, folder in RUNS.items()}
+    terminal = load('terminal')
     policy = ['Q-learning', 'SARSA']
     exploration = list(RUNS)[2:]
     curves(histories, policy, 'policy_comparison.png',
            'Q-learning vs SARSA: linear epsilon 0.95 to 0 at 7,000 rounds')
     curves(histories, exploration, 'epsilon_comparison.png',
            'Exploration comparison: kStep epsilon, cutoff at 7,000 rounds')
+    reward_mode_comparison(histories['Q-learning'], terminal)
     phases = {'first_500': slice(0, 500), 'exploration_1_7000': slice(0, CUTOFF),
               'greedy_7001_10000': slice(CUTOFF, None), 'final_500': slice(-500, None),
               'preceding_500': slice(-1000, -500)}
@@ -98,6 +122,10 @@ def main():
                        'epsilon_schedule': run['mode'],
                        **{name: metrics(run, selection) for name, selection in phases.items()}}
                for label, run in histories.items()}
+    summary['Terminal-only Q-learning'] = {
+        'source': terminal['source'], 'epsilon_start': terminal['start'],
+        'epsilon_schedule': terminal['mode'],
+        **{name: metrics(terminal, selection) for name, selection in phases.items()}}
     (OUTPUT / 'measured_summary.json').write_text(json.dumps(summary, indent=2) + '\n', encoding='utf-8')
     fig, axis = plt.subplots(figsize=(9, 6), constrained_layout=True)
     x = [histories[label]['start'] for label in exploration]

@@ -57,7 +57,7 @@ All robot settings are supplied as arguments to `CapPeeler(...)` in `main()`:
 
 | Parameter | Purpose |
 | --- | --- |
-| `epsilon_start` | Initial exploration probability; use 0 for no exploration |
+| `epsilon_start` | Initial exploration probability; at 0, a fresh training table gets random Q-values |
 | `epsilon_zero_at_battle` | Round cutoff for exploration; 0 disables it immediately |
 | `epsilon_decay` | `EpsilonSchedule.Decay.kLinear` or `.kStep` |
 | `algorithm` | `LUTInterface.Algorithm.kQLearning` or `.kSarsa` |
@@ -97,6 +97,17 @@ Thus the state-row representation has **108 rows and 6 action columns**. If each
 row represents a complete state-action pair, there are **648 rows/Q-values**.
 The actual NumPy array has shape (3,4,3,3,6). Actions are a predefined discrete
 set, rather than a quantization of all possible continuous control combinations.
+
+CapPeeler therefore uses a reactive macro-action policy: the LUT selects one of
+the six actions for five ticks based on the current distance, bearing, and energy
+bins. The radar sweeps continuously, and the gun tracks the most recently scanned
+target independently of the LUT. The `FIRE` action only fires a power-3 bullet
+when the gun is within 10 degrees of the target and own energy exceeds 3. The
+LUT does not choose aim direction or bullet power, and the state does not include
+opponent velocity, so the controller does not explicitly predict shots. There
+is no hand-coded orbiting or bullet-dodging routine; any such movement pattern
+would have to emerge from the learned action values. Its measured performance
+reflects both the learned action choices and this fixed tracking and firing logic.
 
 Update frequencies are tracked separately from Q-values:
 
@@ -164,6 +175,14 @@ practical plateau in measured performance. It does not prove that every LUT
 entry has converged. The learning rate remains 0.1, and the improvement while
 epsilon falls includes the effect of taking fewer random actions. No history
 of Q-value changes was logged to establish numerical convergence directly.
+The learned policy only selects among the six five-tick actions; the radar sweep
+and gun tracking are fixed controller behavior. Thus these learning curves
+measure changes in the action choices made by the LUT while the same aiming and
+scanning system operates in every run. This distinction matters when interpreting
+the high win rates: good target tracking is partly supplied by the controller,
+while the LUT learns which movement or firing action to use in each quantized
+state. The logs do not record action identities or trajectories, so they cannot
+show which specific movement pattern emerged.
 
 ### (3b)
 
@@ -182,6 +201,9 @@ policy and executed next:
 Both use reward alone for terminal updates. The current implementation uses
 alpha = 0.1 and gamma = 0.95. The recorded epsilon schedules and round budgets
 match between these two runs.
+The Q-learning and SARSA agents share CapPeeler's movement, radar, gun-tracking,
+and firing rules. The algorithm comparison is therefore about how their LUT
+values are updated, not a change to the robot's hand-coded targeting behavior.
 
 | Algorithm | Win rate, rounds 1-7,000 | Win rate, rounds 7,001-10,000 | Final 500 win rate | Final 500 mean reward | Final 500 mean duration (turns) |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -192,7 +214,10 @@ During the first 7,000 rounds the aggregate win rates are similar. After
 exploration ends, SARSA has the higher win rate in this pair of runs. In the
 final 500 rounds its advantage is 5.8 percentage points, with slightly higher
 mean reward. Its rounds also last about 25 turns longer on average. Duration
-alone does not establish a particular movement or firing strategy.
+alone does not establish a particular movement or firing strategy. Since the
+CSV records total actions but not counts by action type, I cannot infer from
+these results whether either update rule learned to favor circling, retreating,
+or another specific maneuver.
 
 These are results from one run per condition. Algorithm labels come from the
 respective experiment folders as identified by the user; the CSV and checkpoint
@@ -223,12 +248,36 @@ terminal-only rewards. Intermediate
 transitions still perform TD updates, with zero immediate reward in that mode.
 Terminal rewards can therefore propagate back through earlier transitions.
 
-**Measured comparison pending:** the provided folders do not identify a
-terminal-only experiment. A terminal-only run and a matching intermediate-reward
-run are needed before a behaviour comparison or supporting graph can be given.
-Use win rate as the common metric because raw reward totals have different
-meanings under the two reward definitions. Less frequent feedback may slow
-learning, but that is an expectation to test, not a measured result here.
+**Measured comparison.** Figure 4 compares the terminal-only run with the
+Q-learning run using intermediate rewards. Their checkpoints show the same
+epsilon schedule (0.95 initially, linear decay to zero at round 7,000), and both
+histories contain 10,000 rounds. Win rate is the main comparison metric because
+the reward totals have different meanings under the two reward definitions.
+
+![Figure 4. Rolling win rate and epsilon schedule for intermediate and terminal-only rewards.](figures/reward_mode_comparison.png)
+
+*Figure 4. Rolling win rate over 200 rounds. Both runs use the same recorded
+epsilon schedule; learning continues after epsilon reaches zero.*
+
+| Reward mode | Win rate, rounds 1-7,000 | Win rate, rounds 7,001-10,000 | Final 500 win rate | Final 500 mean reward |
+| --- | ---: | ---: | ---: | ---: |
+| Intermediate (Q-learning) | 34.26% | 90.67% | 92.0% | 124.30 |
+| Terminal-only (Q-learning) | 21.57% | 89.73% | 93.6% | 87.20 |
+
+The terminal-only run has a lower win rate during the first 7,000 rounds, then
+comes close to the intermediate run after epsilon reaches zero. In the final
+500 rounds it is 1.6 percentage points higher. This is consistent with slower
+early learning from less frequent feedback, but one run per setting cannot
+establish that reward mode caused the difference. Mean rewards should not be
+compared directly across modes: the intermediate run includes event rewards,
+while the terminal-only run records only terminal outcomes. The checkpoints and
+CSV files do not record reward mode, opponent, arena settings, or random seed;
+the labels come from the experiment folders. Treat the comparison as indicative,
+and repeat matched runs to estimate variability.
+
+Sources: [intermediate Q-learning data](../../training/qlearning/cappeeler.csv)
+and [terminal-only data](../../training/terminal/cappeeler.csv); both saved
+checkpoints confirm the same linear epsilon schedule.
 
 ## Question (4)
 
@@ -238,74 +287,112 @@ learning, but that is an expectation to test, not a measured result here.
 
 > Compare training performance using different values of epsilon including no exploration at all. Provide graphs of the measured performance of your tank vs epsilon.
 
-**Answer.** I compared the completed kStep runs with initial epsilon values
-0.25, 0.50, and 0.75. Each keeps epsilon constant for rounds 1-7,000 and then
-sets it to zero for rounds 7,001-10,000. The 0.8 experiment is excluded.
-Figures 2 and 3 show the measured learning curves and win rate versus the initial
-exploration probability.
+**Answer.** I compared completed kStep runs with initial epsilon values 0.25,
+0.50, and 0.75, and the new 10,000-round randomized-initialization
+epsilon-zero run. The nonzero
+settings keep epsilon constant for rounds 1-7,000 and then set it to zero for
+rounds 7,001-10,000. The epsilon = 0 run uses greedy action selection from the
+start while still learning. Its table was randomly initialized before the first
+round. The 0.8 experiment is excluded. Figures 2 and 3 have been regenerated
+with this completed run.
 
-![Figure 2. Measured learning curves for the three kStep exploration settings.](figures/epsilon_comparison.png)
+![Figure 2. Measured learning curves for four kStep exploration settings, including the no-exploration baseline.](figures/epsilon_comparison.png)
 
 *Figure 2. Rolling 200-round win rate and mean reward, with epsilon used in each
-round. The shaded phase uses epsilon = 0 while learning continues.*
+round. For nonzero initial epsilon, the shaded phase uses epsilon = 0 while
+learning continues; the epsilon = 0 baseline is greedy throughout.*
 
-![Figure 3. Measured win rate versus initial kStep epsilon.](figures/epsilon_summary.png)
+![Figure 3. Measured win rate versus initial kStep epsilon, including zero.](figures/epsilon_summary.png)
 
 *Figure 3. Win rate at each initial epsilon, reported separately for rounds
-1-7,000, rounds 7,001-10,000, and the final 500 rounds. Lines connect the three
-measured settings only; no unmeasured setting is estimated.*
+1-7,000, rounds 7,001-10,000, and the final 500 rounds. Lines connect measured
+settings only; no unmeasured setting is estimated.*
 
 | Initial epsilon | Win rate, rounds 1-7,000 | Mean reward, rounds 1-7,000 | Win rate, rounds 7,001-10,000 | Final 500 win rate | Final 500 mean reward |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 0.25 | 55.56% | -4.91 | 95.83% | 98.6% | 129.78 |
 | 0.50 | 21.21% | -98.43 | 92.90% | 93.8% | 121.32 |
 | 0.75 | 11.89% | -119.32 | 93.87% | 92.8% | 118.26 |
-| 0 from initialization | Pending | Pending | Not applicable | Pending | Pending |
+| 0 (randomly initialized Q-table) | 91.31% | 98.37 | 94.10% | 95.2% | 108.14 |
 
-Sources: [epsilon 0.25 data](../../training/0.25%20epsilon/cappeeler.csv),
-[epsilon 0.50 data](../../training/0.5%20epsilon/cappeeler.csv), and
-[epsilon 0.75 data](../../training/0.75%20epsilon/cappeeler.csv), with the Step schedules
-verified against the checkpoint files. The algorithm and reward mode of these
-runs are not recorded in those files, so the comparison assumes those settings
-were held constant across the three experiments.
+Sources for the nonzero settings: [epsilon 0.25 data](../../training/0.25%20epsilon/cappeeler.csv),
+[epsilon 0.50 data](../../training/0.5%20epsilon/cappeeler.csv),
+[epsilon 0.75 data](../../training/0.75%20epsilon/cappeeler.csv); their Step
+schedules were verified against the checkpoints. The CSV now at [training/0
+epsilon](../../training/0%20epsilon/cappeeler.csv) contains the completed
+randomized-initialization run. The algorithm and reward mode are not recorded
+in these experiment files, so comparisons assume those settings were held
+constant.
 
-Among the tested values, epsilon = 0.25 achieves the highest win rate during
-exploration and in the final 500 rounds. Increasing epsilon reduces performance
-while exploration is active, consistent with a larger fraction of random actions
-interrupting useful behaviour. All three runs improve sharply when epsilon
-becomes zero, indicating that their exploratory battle performance understates
-the performance available with greedy action selection. Learning continues, so
-the later phase is not a frozen-policy evaluation.
+Among the tested settings, epsilon = 0.25 achieves the highest win rate during
+rounds 1-7,000 and in the final 500 rounds. The randomized epsilon-zero run
+reaches 91.31% wins during rounds 1-7,000 and 95.2% in its final 500 rounds.
+It uses random initialization when
+`epsilon_start == 0` and the configured table path does not yet exist. This was
+added because a zero-initialized table makes all six actions tie in every
+unvisited state; with epsilon zero, the greedy selector then relies on random
+tie-breaking. `initialize_random()` assigns independent uniform values in
+[-0.5, 0.5) to the Q-table before training, giving each state an initial random
+action preference. This is still greedy selection, not epsilon exploration:
+random values do not ensure that every action will be tried. If the checkpoint
+already exists, it is loaded and random initialization is skipped.
+
+In the constructor, the initialization branch is:
+
+```python
+elif self.training and not self.table_path.exists() and epsilon_start == 0:
+    self.qtable.initialize_random()
+```
+
+The completed randomized run contains 10,000 rounds, all with epsilon = 0.
+It won 9,215 rounds (92.15%), lost 784, and drew once. Win rate rose from 77.6%
+in rounds 1-500 to 83.2% in rounds 501-1,000, then reached 91.31% over rounds
+1-7,000 and 94.1% over rounds 7,001-10,000. The final 500-round win rate was
+95.2%; mean reward over all rounds was 100.65. Figures 2 and 3 now show these
+completed results. The randomized run uses `seed=None`, so its random initial
+table and tie-breaking sequence are not reproducible from the CSV alone; the
+saved checkpoint preserves the current Q-values. The zero-epsilon run's mean
+reward can also differ from what its win rate suggests,
+because intermediate rewards record hits and collisions as well as outcomes.
+The increase between the first and second 500-round windows, and the further
+rise in the later windows, are consistent with learning under greedy action
+selection. They do not identify which actions improved the policy: action
+choices are not logged individually, and CapPeeler's continuous gun tracking
+is already hand-coded. The experiment logs do not record opponent behavior or
+action identities, so these results do not establish that CapPeeler learned a
+specific counter-strategy against Influence.
+For the nonzero settings, all three improve sharply when epsilon becomes zero.
+Learning continues, so neither segment is a frozen-policy evaluation.
 
 The final ordering is not strictly monotonic across every measurement window:
 epsilon = 0.75 slightly exceeds 0.50 over the full final 3,000 rounds, but scores
 below it over the final 500. These single runs support choosing 0.25 among the
 three tested settings; they do not establish an optimal epsilon in general.
 
-**No-exploration baseline pending:** the user is training epsilon = 0 from
-initialization. Switching exploration off after 7,000 exploratory rounds is not
-that baseline. Its data and plot will be added when the run completes. Greedy
-action ties may still be resolved randomly even when explicit exploration is zero.
+Greedy action ties may still be resolved randomly even when explicit exploration
+is zero. These results are single runs; repeated runs with matched seeds and
+settings would be needed to determine whether the differences are reliable.
 
 ### Evidence and reproduction
 
-The plotted results use 50,000 completed rounds across the five included runs.
-All histories are continuous from episode 1 through 10,000. Saved epsilon
-schedules were checked against every CSV row. Figures use full rolling windows;
-summary tables use the exact episode ranges shown, with wins divided by all
-rounds, including any draws. There is one run per condition and no estimate of
-variation across independent seeds.
+The figures use 70,000 completed rounds across seven run records: Q-learning,
+SARSA, four epsilon conditions, and terminal-only Q-learning. The zero-epsilon
+CSV/checkpoint contain the completed randomized-initialization run; the earlier
+zero-epsilon run cannot currently be regenerated from its original files.
+Figures use full rolling windows; summary tables use the exact episode ranges
+shown, with wins divided by all rounds, including any draws. There is one run per
+condition and no estimate of variation across independent seeds.
 
-Regenerate the three figures and exact numeric summaries from the repository
-root with:
+To regenerate the figures and exact numeric summaries from the repository root,
+run:
 
 ```powershell
 .venv/Scripts/python.exe -B src/analyze_experiments.py
 ```
 
-The figures are saved under `doc/Part 2/figures/`; exact unrounded summary
-values are in `doc/Part 2/figures/measured_summary.json`. Original CSVs,
-checkpoints, and per-run plots are preserved.
+The figures are saved under `doc/Part 2/figures/`; exact unrounded historical
+summary values are in `doc/Part 2/figures/measured_summary.json`. The
+zero-epsilon CSV and checkpoint contain the completed randomized run.
 
 ## Running and plotting the robot
 
@@ -338,9 +425,11 @@ The algorithm follows the Q-learning algorithm discussed in the lecture notes:
     Q(s,a) += alpha * (reward + gamma * max(Q(next_state)) - Q(s,a))
 
 Terminal transitions use reward alone. The LUT defaults to alpha=0.1 and
-gamma=0.95. The current bot launcher selects SARSA with intermediate rewards
-and a linear epsilon schedule starting at 0.95 and reaching zero after 7,000
-rounds; constructor arguments in `main()` control these settings.
+gamma=0.95. The current bot launcher selects Q-learning with intermediate
+rewards and `epsilon_start=0`. When its configured checkpoint path does not yet
+exist, it randomly initializes the Q-table; when the checkpoint exists, it
+loads the saved Q-values instead. Constructor arguments in `main()` control
+these settings.
 Greedy action selection breaks ties randomly.
 
 `src/LUTInterface.py` implements Q-learning, the `State` dataclass, six actions,
@@ -381,11 +470,12 @@ bullet hits; they update the active transition, without retroactive bullet credi
 assignment or extra energy shaping. Terminal callbacks collect rewards; after final events are flushed, the next round start or game end
 performs one final update, including rounds shorter than five ticks.
 
-Training outputs (saved at the next round start or game end):
+Training outputs (saved at the next round start or game end for the current
+launcher configuration):
 
-- `training/sarsa/cappeeler.npz`: Q-values, epsilon and completed episode count;
+- `training/0 epsilon/cappeeler.npz`: Q-values, epsilon and completed episode count;
   loaded automatically on the next launch.
-- `training/sarsa/cappeeler.csv`: episode reward, outcome, turns, action count and
+- `training/0 epsilon/cappeeler.csv`: episode reward, outcome, turns, action count and
   epsilon. Compute win rate and average reward across a window of these rows.
 
 To evaluate, set `training=False` in the `CapPeeler(...)` call in `main()`.

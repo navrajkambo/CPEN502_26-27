@@ -81,6 +81,90 @@ class LearningTests(unittest.TestCase):
         table.configure_epsilon(start=.8, zero_at_battle=0)
         self.assertEqual(table.epsilon, 0)
 
+    def test_linear_perf_window_boundaries_and_restoration(self):
+        schedule = EpsilonSchedule(.95, 7000, EpsilonSchedule.Decay.kLinearPerf)
+        for battle in (0, 199, 210, 399, 410, 6999):
+            self.assertFalse(schedule.is_performance_round(battle))
+            self.assertAlmostEqual(schedule.value(battle), .95 * (1 - battle / 7000))
+        for battle in (200, 209, 400, 409, 6800, 6809):
+            self.assertTrue(schedule.is_performance_round(battle))
+            self.assertEqual(schedule.value(battle), 0)
+        for battle in (7000, 7001, 7200, 7210):
+            self.assertFalse(schedule.is_performance_round(battle))
+            self.assertEqual(schedule.value(battle), 0)
+        # A window that reaches the cutoff never resumes exploration.
+        truncated = EpsilonSchedule(.8, 205, EpsilonSchedule.Decay.kLinearPerf)
+        self.assertTrue(truncated.is_performance_round(204))
+        self.assertFalse(truncated.is_performance_round(205))
+        self.assertEqual(truncated.value(210), 0)
+        self.assertEqual(EpsilonSchedule(.8, 0, EpsilonSchedule.Decay.kLinearPerf).value(0), 0)
+
+    def test_linear_perf_custom_windows_and_resume_inside_window(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'performance.npz'
+            table = LUTInterface()
+            table.episodes = 101
+            table.configure_epsilon(.8, 1000, EpsilonSchedule.Decay.kLinearPerf,
+                                    perf_interval=100, perf_rounds=5)
+            self.assertEqual(table.epsilon, 0)
+            table.saveWeights(path)
+            restored = LUTInterface()
+            restored.loadWeights(path)
+            self.assertEqual(restored.epsilon_schedule, table.epsilon_schedule)
+            restored.episodes = 104
+            restored.decay_epsilon()
+            self.assertEqual(restored.epsilon, 0)
+            restored.episodes = 105
+            restored.decay_epsilon()
+            self.assertAlmostEqual(restored.epsilon, .8 * (1 - 105 / 1000))
+
+    def test_invalid_performance_windows_do_not_replace_schedule(self):
+        table = LUTInterface(epsilon=.3)
+        for interval, rounds in ((0, 10), (200, 0), (10, 10), (10, 11),
+                                 (True, 1), (200, True), (2.5, 1), (200, 1.5)):
+            with self.subTest(interval=interval, rounds=rounds):
+                with self.assertRaises(ValueError):
+                    table.configure_epsilon(.8, 7000, EpsilonSchedule.Decay.kLinearPerf,
+                                            perf_interval=interval, perf_rounds=rounds)
+                self.assertIsNone(table.epsilon_schedule)
+                self.assertEqual(table.epsilon, .3)
+
+    def test_linear_perf_constructor_and_learning_and_csv_are_unchanged(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'performance.npz'
+            configured = self.make_configured_bot(
+                table_path=path, epsilon_start=.8, epsilon_zero_at_battle=7000,
+                epsilon_decay=EpsilonSchedule.Decay.kLinearPerf,
+                epsilon_perf_interval=200, epsilon_perf_rounds=10)
+            self.assertEqual(configured.qtable.epsilon_schedule.perf_rounds, 10)
+            bot = self.bot()
+            bot.table_path, bot.metrics_path = path, path.with_suffix('.csv')
+            bot.qtable.episodes = 200
+            bot.qtable.configure_epsilon(.8, 7000, EpsilonSchedule.Decay.kLinearPerf)
+            bot._bot_internals = Event(radar_turn_rate=0)
+            self.assertEqual(bot.qtable.epsilon, 0)
+            bot.on_tick(Event(turn_number=1))
+            bot.on_bullet_hit(Event())
+            bot.on_tick(Event(turn_number=6))
+            self.assertGreater(bot.qtable.update_counts.sum(), 0)
+            before = bot.qtable.update_counts.sum()
+            bot.on_won_round(Event())
+            bot.on_round_ended(Event(round_number=201, turn_number=8))
+            bot._finish_episode()
+            self.assertEqual(bot.qtable.update_counts.sum(), before + 1)
+            self.assertEqual(bot.qtable.episodes, 201)
+            self.assertEqual(bot.qtable.epsilon, 0)
+            self.assertEqual(bot.metrics_path.read_text().splitlines()[0],
+                             'episode,round,outcome,reward,turns,actions,epsilon')
+            # End of the ten-round window: round 210 uses zero, round 211
+            # uses the current linear-decay value instead of the pre-window value.
+            bot.qtable.episodes = 209
+            bot.qtable.decay_epsilon()
+            bot._reset_episode()
+            bot.on_round_ended(Event(round_number=210, turn_number=1))
+            bot._finish_episode()
+            self.assertAlmostEqual(bot.qtable.epsilon, .8 * (1 - 210 / 7000))
+
     def test_invalid_epsilon_schedule_leaves_current_setting_unchanged(self):
         table = LUTInterface(epsilon=.3)
         for options in (dict(start=-.1, zero_at_battle=7000),

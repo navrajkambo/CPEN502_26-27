@@ -52,11 +52,14 @@ class State: # an observation snapshot, converted to discrete bins only for LUT 
 class EpsilonSchedule:
     class Decay(Enum):
         kLinear = "Linear"
+        kLinearPerf = "LinearPerf"
         kStep = "Step"
 
     start: float
     zero_at_battle: int
     mode: Decay = Decay.kStep
+    perf_interval: int = 200
+    perf_rounds: int = 10
 
     def __post_init__(self):
         # check ranges and make sure that decay type is defined
@@ -66,13 +69,28 @@ class EpsilonSchedule:
                 or isinstance(self.zero_at_battle, bool) or self.zero_at_battle < 0):
             raise ValueError("zero_at_battle must be a nonnegative integer")
         if not isinstance(self.mode, self.Decay):
-            raise ValueError("Epsilon decay mode must be Linear or Step")
+            raise ValueError("Epsilon decay mode must be Linear, LinearPerf or Step")
+        if (isinstance(self.perf_interval, bool)
+                or not isinstance(self.perf_interval, (int, np.integer))
+                or self.perf_interval < 1):
+            raise ValueError("Performance interval must be a positive integer")
+        if (isinstance(self.perf_rounds, bool)
+                or not isinstance(self.perf_rounds, (int, np.integer))
+                or not 1 <= self.perf_rounds < self.perf_interval):
+            raise ValueError("Performance rounds must be positive and less than the interval")
+
+    def is_performance_round(self, battle: int) -> bool:
+        return (self.mode == self.Decay.kLinearPerf
+                and self.perf_interval <= battle < self.zero_at_battle
+                and battle % self.perf_interval < self.perf_rounds)
 
     def value(self, battle: int) -> float:
         if battle >= self.zero_at_battle: # zero epsilon value after max battle
             return 0.0
         if self.mode == self.Decay.kStep: # keep epsilon constant
             return self.start
+        if self.is_performance_round(battle):
+            return 0.0
         return self.start * (1 - battle / self.zero_at_battle) # reduce epsilon proportional to current battle / total battles
 
 class LUTInterface(BaseInterface):
@@ -129,8 +147,11 @@ class LUTInterface(BaseInterface):
         self.update_counts[index] += 1
         return td_error
 
-    def configure_epsilon(self, start: float, zero_at_battle: int, mode: EpsilonSchedule.Decay = EpsilonSchedule.Decay.kLinear) -> None:
-        self.epsilon_schedule = EpsilonSchedule(start, zero_at_battle, mode)
+    def configure_epsilon(self, start: float, zero_at_battle: int,
+                          mode: EpsilonSchedule.Decay = EpsilonSchedule.Decay.kLinear,
+                          perf_interval: int = 200, perf_rounds: int = 10) -> None:
+        self.epsilon_schedule = EpsilonSchedule(start, zero_at_battle, mode,
+                                                perf_interval, perf_rounds)
         self.epsilon = self.epsilon_schedule.value(self.episodes)
 
     def decay_epsilon(self) -> None:
@@ -148,6 +169,8 @@ class LUTInterface(BaseInterface):
             "epsilon_start": self.epsilon_schedule.start,
             "epsilon_zero_at_battle": self.epsilon_schedule.zero_at_battle,
             "epsilon_decay_mode": self.epsilon_schedule.mode.value,
+            "epsilon_perf_interval": self.epsilon_schedule.perf_interval,
+            "epsilon_perf_rounds": self.epsilon_schedule.perf_rounds,
         }
         with temporary.open("wb") as stream:
             np.savez_compressed(stream, Q=self.Q, update_counts=self.update_counts,
@@ -175,10 +198,18 @@ class LUTInterface(BaseInterface):
             # from zero while retaining their learned Q-values and metadata.
             counts = (np.array(data["update_counts"], copy=True)
                       if "update_counts" in data else np.zeros(values.shape, dtype=np.int64))
-            schedule = (EpsilonSchedule(float(data["epsilon_start"]),
-                                        data["epsilon_zero_at_battle"].item(),
-                                        EpsilonSchedule.Decay(str(data["epsilon_decay_mode"].item()).capitalize()))
-                        if "epsilon_zero_at_battle" in data else None)
+            schedule = None
+            if "epsilon_zero_at_battle" in data:
+                # Match legacy lowercase strings as well as multiword modes.
+                saved_mode = str(data["epsilon_decay_mode"].item()).casefold()
+                modes = {mode.value.casefold(): mode for mode in EpsilonSchedule.Decay}
+                if saved_mode not in modes:
+                    raise ValueError(f"Unknown saved epsilon decay mode: {saved_mode}")
+                schedule = EpsilonSchedule(
+                    float(data["epsilon_start"]),
+                    data["epsilon_zero_at_battle"].item(), modes[saved_mode],
+                    data["epsilon_perf_interval"].item() if "epsilon_perf_interval" in data else 200,
+                    data["epsilon_perf_rounds"].item() if "epsilon_perf_rounds" in data else 10)
         if values.shape != self.Q.shape or not np.isfinite(values).all():
             raise ValueError("Saved Q-table has incompatible shape or invalid values")
         if not 0 <= epsilon <= 1 or episodes < 0:

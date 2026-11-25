@@ -99,6 +99,13 @@ class LUTInterface(BaseInterface):
     def state_update_counts(self) -> np.ndarray:
         return self.update_counts.sum(axis=-1) # used for part 3 - remove under-visited states
 
+    def initialize_random(self, low: float = -0.5, high: float = 0.5) -> None:
+        low, high = float(low), float(high)
+        if not np.isfinite(low) or not np.isfinite(high) or low >= high:
+            raise ValueError("Random initialization bounds must be finite and low < high")
+        self.Q[...] = self.rng.uniform(low, high, size=self.Q.shape)
+        self.update_counts.fill(0)
+
     def choose_action(self, state: State, explore: bool = True) -> int:
         if explore and (self.rng.random() < self.epsilon): # if epsilon > random number between (0,1) (epsilon is percentage of random exploratory moves)
             return int(self.rng.integers(self.Q.shape[-1])) # random number between 0 and 5

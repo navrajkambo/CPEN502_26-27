@@ -65,6 +65,8 @@ class CapPeeler(Bot):
             self.qtable.loadWeights(self.table_path)
         elif not self.training:
             raise FileNotFoundError(f"Train a table before evaluation: {self.table_path}")
+        elif self.training and not self.table_path.exists() and epsilon_start == 0:
+            self.qtable.initialize_random() # randomly initialize weights when epsilon is 0
 
         if epsilon_zero_at_battle is not None:
             self.qtable.configure_epsilon(
@@ -295,7 +297,7 @@ def main():
         training=True,  # False for greedy evaluation without learning or saving
         table_path=SOURCE_DIR.parent / "training" / "cappeeler.npz",
         seed=None,
-        diagnostics_enabled=True,
+        diagnostics_enabled=True, # ChatGPT (in an attempt to diagnose freezing UI)
     )
     try:
         bot.start()

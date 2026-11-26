@@ -1,7 +1,5 @@
-import csv
 import time
 import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
 from enum import IntEnum, Enum
 from dataclasses import dataclass
@@ -221,52 +219,12 @@ class LUTInterface(BaseInterface):
         self.update_counts = counts.astype(np.int64)
         self.epsilon_schedule = schedule
 
-    def plotLearningPerformance(self, filename: str, window: int = 50, output_path: str | None = None, show: bool = False) -> tuple: # CHATGPT
-        """Plot training rewards, win rate and epsilon from the round history.
-
-        Rolling statistics include up to `window` rounds, including the current
-        round. Early points use all rounds available. Epsilon is the recorded
-        value after each round; these are training results including exploration.
-        """
-        if not isinstance(window, int) or window < 1:
-            raise ValueError("window must be a positive integer")
-        path = Path(filename)
-        with path.open(newline="", encoding="utf-8-sig") as stream:
-            rows = list(csv.DictReader(stream))
-        if not rows:
-            raise ValueError("No completed rounds to plot")
-        episodes = np.array([int(row["episode"]) for row in rows])
-        rewards = np.array([float(row["reward"]) for row in rows])
-        wins = np.array([row["outcome"] == "win" for row in rows], dtype=float)
-        epsilon = np.array([float(row["epsilon"]) for row in rows])
-
-        def rolling_mean(values):
-            totals = np.concatenate(([0.0], np.cumsum(values)))
-            ends = np.arange(1, len(values) + 1)
-            starts = np.maximum(0, ends - window)
-            return (totals[ends] - totals[starts]) / (ends - starts)
-
-        fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True,
-                                 constrained_layout=True)
-        fig.suptitle("CapPeeler training performance (includes exploration)")
-        axes[0].plot(episodes, rewards, color="lightsteelblue", alpha=0.6,
-                     label="Round reward")
-        axes[0].plot(episodes, rolling_mean(rewards), color="tab:blue",
-                     label=f"Average over last {window} rounds")
-        axes[0].set_ylabel("Reward")
-        axes[0].legend(loc="best")
-        axes[1].plot(episodes, 100 * rolling_mean(wins), color="tab:red")
-        axes[1].set_ylabel(f"Win rate (%)\nLast {window} rounds")
-        axes[1].set_ylim(0, 100)
-        axes[2].plot(episodes, epsilon, color="tab:green")
-        axes[2].set_ylabel("Epsilon after round")
-        axes[2].set_ylim(0, 1.05)
-        axes[2].set_xlabel("Completed training rounds (battles / episodes)")
-        for ax in axes:
-            ax.grid(True, alpha=0.25)
-        destination = Path(output_path) if output_path else path.with_suffix(".png")
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(destination, dpi=150)
-        if show:
-            plt.show()
-        return fig, axes
+    # CHATGPT
+    def plotLearningPerformance(self, filename: str, window: int = 50, output_path: str | None = None, show: bool = False) -> tuple:
+        """Compatibility method; the implementation lives in test/plotter/training.py."""
+        import sys
+        root = str(Path(__file__).resolve().parents[1])
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from test.plotter.training import plot_learning_performance
+        return plot_learning_performance(filename, window, output_path, show)

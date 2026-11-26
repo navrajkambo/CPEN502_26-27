@@ -1,22 +1,12 @@
-"""View saved training results without starting a battle."""
-import argparse
+"""Compatibility entry point; plotting lives in test/plotter/training.py."""
+# CHATGPT
 from pathlib import Path
-import matplotlib.pyplot as plt
-from LUTInterface import LUTInterface
+import sys
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from test.plotter.training import main
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("filename", nargs="?", type=Path,
-                        default=Path(__file__).resolve().parents[1] /
-                        "training" / "cappeeler.csv")
-    parser.add_argument("--window", type=int, default=50)
-    parser.add_argument("--show", action="store_true", help="Open the plot window")
-    args = parser.parse_args()
-    fig, _ = LUTInterface().plotLearningPerformance(
-        args.filename, window=args.window, show=args.show)
-    plt.close(fig)
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

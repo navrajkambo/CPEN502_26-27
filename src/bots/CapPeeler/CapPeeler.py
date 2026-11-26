@@ -82,14 +82,14 @@ class CapPeeler(Bot):
               and (self.qtable.epsilon_schedule is None
                    or self.qtable.epsilon_schedule.mode != EpsilonSchedule.Decay.kLinearPerf)):
             raise ValueError("kLinearPerf requires epsilon_zero_at_battle or a saved kLinearPerf schedule")
-        # Process scans, damage and death before each learning decision.
-        self.set_event_priority(TickEvent, 0)
+
+        self.set_event_priority(TickEvent, 0) # process scans, damage and death before each learning decision.
         self._reset_episode()
         self.diagnostics = None
-        if diagnostics_enabled:
+        if diagnostics_enabled: # NK - tried to diagnose ui freezing issue
             self.diagnostics = BotDiagnostics(self.table_path.with_suffix(".diagnostics.log"))
 
-    def _reset_episode(self): # reset state action reward and target between rounds
+    def _reset_episode(self) -> None: # reset state action reward and target between rounds
         self._target = None
         self._state: State | None = None
         self._action = None
@@ -106,12 +106,12 @@ class CapPeeler(Bot):
         self._finish_episode()
         self._reset_episode()
 
-    def _heartbeat(self, phase):
+    def _heartbeat(self, phase) -> None: # CHATGPT
         diagnostics = getattr(self, "diagnostics", None)
         if diagnostics is not None:
             diagnostics.heartbeat(phase)
 
-    def run(self):
+    def run(self) -> None:
         self.body_color = Color.from_rgb(255, 0, 255) # purple
         self.turret_color = Color.from_rgb(255, 255, 255)
         self.adjust_gun_for_body_turn = True
@@ -133,8 +133,8 @@ class CapPeeler(Bot):
     def on_tick(self, e: TickEvent) -> None:
         if self._outcome is not None or self._finished or self._round_end is not None:
             return
-        self._heartbeat(f"tick {e.turn_number}")
-        self.radar_turn_rate = 45
+        self._heartbeat(f"tick {e.turn_number}") # diagnostic
+        self.radar_turn_rate = 45 # radar's rotation speed in degrees per turn (positive for clockwise, negative for counter-clockwise)
         if self._target is None:
             self.target_speed = 0
             self.turn_rate = 0
@@ -157,13 +157,13 @@ class CapPeeler(Bot):
         self._execute_action(e.turn_number)
 
     def _execute_action(self, turn):
-        # Reset previous commands so actions do not leak into the next interval.
+        # reset previous commands
         self.target_speed = 0
         self.turn_rate = 0
         self.set_fire(0)
         _, x, y, _, seen = self._target
-        fresh = turn - seen <= self.TARGET_TIMEOUT
-        self.gun_turn_rate = self.gun_bearing_to(x, y) if fresh else 0
+        fresh = turn - seen <= self.TARGET_TIMEOUT # was enemy position recorded within the last 30 ticks
+        self.gun_turn_rate = self.gun_bearing_to(x, y) if fresh else 0 #turn the gun toward the opponent’s last known position or stop rotation
         action = Action(self._action)
         if action == Action.FORWARD:
             self.target_speed = 8
@@ -174,9 +174,9 @@ class CapPeeler(Bot):
         elif action == Action.RIGHT:
             self.turn_rate = -10
         elif action == Action.FACE_ENEMY and fresh:
-            self.turn_rate = self.bearing_to(x, y)
+            self.turn_rate = self.bearing_to(x, y) # turns the tank toward the enemy.
         elif action == Action.FIRE and fresh:
-            if abs(self.gun_bearing_to(x, y)) <= 10 and self.energy > 3:
+            if abs(self.gun_bearing_to(x, y)) <= 10 and self.energy > 3: # check if the gun points within 10 deg of the enemy’s last known position and energy is greater than 3 (enough to cover the shot energy cost)
                 self.set_fire(3)
 
     def _add_reward(self, reward: int, terminal: bool = False):
@@ -206,7 +206,7 @@ class CapPeeler(Bot):
 
     def on_death(self, e: DeathEvent) -> None:
         diagnostics = getattr(self, "diagnostics", None)
-        if diagnostics is not None:
+        if diagnostics is not None: # CHATGPT
             # Continue monitoring: a stall can happen while waiting for the next
             # round or saving the preceding one, even after the bot has died.
             diagnostics.heartbeat(f"died on turn {e.turn_number}; waiting for round end")
@@ -231,7 +231,7 @@ class CapPeeler(Bot):
         self._finish_episode()
         self._plot_performance()
 
-    def _plot_performance(self):
+    def _plot_performance(self): # CHATGPT
         if (not self.training or not self.metrics_path.exists()
                 or getattr(self, "_plotted_episode", None) == self.qtable.episodes):
             return
@@ -266,7 +266,7 @@ class CapPeeler(Bot):
         e: RoundEndedEvent | None = self._round_end
         if e is None or self._finished:
             return
-        # Finalize here, after all terminal-turn rewards have been collected.
+        # after all terminal-turn rewards have been collected.
         if self.training and self._state is not None:
             self.qtable.update(self._state, self._action, self._reward, done=True)
         self._finished = True
@@ -275,14 +275,14 @@ class CapPeeler(Bot):
             self.qtable.decay_epsilon()
             try:
                 self.qtable.saveWeights(self.table_path) # save table
-            except OSError:
+            except OSError: # CHATGPT
                 diagnostics = getattr(self, "diagnostics", None)
                 if diagnostics is not None:
-                    diagnostics.record(f"Checkpoint save failed at episode {self.qtable.episodes}:\n"
-                                       + traceback.format_exc())
+                    diagnostics.record(f"Checkpoint save failed at episode {self.qtable.episodes}:\n" + traceback.format_exc())
                 raise
             self.metrics_path.parent.mkdir(parents=True, exist_ok=True)
             header = not self.metrics_path.exists()
+            # CHATGPT
             with self.metrics_path.open("a", newline="", encoding="utf-8") as stream: # for plotting
                 writer = csv.writer(stream)
                 if header:
@@ -304,7 +304,7 @@ def main():
         reward_mode=LUTInterface.RewardMode.kIntermediate,  # or LUTInterface.RewardMode.kTerminal
         training=True,  # False for greedy evaluation without learning or saving
         table_path=SOURCE_DIR.parent / "training" / "cappeeler.npz",
-        seed=None,
+        seed=None, # unused seed (NK)
         diagnostics_enabled=True, # ChatGPT (in an attempt to diagnose freezing UI)
     )
     try:

@@ -45,6 +45,24 @@ class State: # an observation snapshot, converted to discrete bins only for LUT 
     def to_tuple(self) -> tuple[int, int, int, int]:
         return self.distance_bin, self.bearing_bin, self.own_energy_bin, self.enemy_energy_bin
 
+    def to_normalized_tuple(self, arena_size: tuple[float, float], energy_scale: float = 100.0) -> np.ndarray:
+        scales = np.asarray([arena_size[1], arena_size[0], energy_scale], dtype=float)
+        if not np.all(np.isfinite(scales)) or np.any(scales <= 0):
+            raise ValueError("Arena dimensions and energy_scale must be finite and positive")
+        observations = np.asarray([self.distance, self.bearing, self.own_energy, self.enemy_energy],dtype=float)
+        if not np.all(np.isfinite(observations)): # prevent divide by zero
+            raise ValueError("One of your states is infinite!")
+
+        distance, bearing, own_energy, enemy_energy = observations
+        angle = np.deg2rad(bearing)
+        return np.array([
+            distance / np.hypot(scales[0], scales[1]), # normalized dist
+            np.sin(angle), # normalized x
+            np.cos(angle), # normalized y
+            own_energy / scales[2], # normalized energy
+            enemy_energy / scales[2], # normalized energy
+        ], dtype=float)
+
 
 @dataclass(frozen=True)
 class EpsilonSchedule:

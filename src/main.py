@@ -1,4 +1,4 @@
-from NNInterface import NeuralNetwork
+from NNInterface import NeuralNetwork, Layer
 from BaseInterface import ACTIV, LEARN
 from LUTInterface import LUTInterface
 from robocode import RoboCode
@@ -6,7 +6,7 @@ import time
 import atexit
 
 # Binary Activation function for 2-4-1 network
-# myNet = NeuralNetwork(hiddenNodes=[4], maxEpoch=50000, activFunc=ACTIV.kBipolar, learnMode=LEARN.kBatch, momentum=0.9)
+# myNet = NeuralNetwork(hiddenNodes=[Layer(4, ACTIV.kBipolar)], maxEpoch=50000, activFunc=ACTIV.kBipolar, learnMode=LEARN.kBatch, momentum=0.9)
 # myNet.trainModel()
 # myNet.avgTrain(100, plot=True)
 

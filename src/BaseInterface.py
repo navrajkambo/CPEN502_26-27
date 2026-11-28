@@ -16,44 +16,74 @@ class NET(Enum):
 class ACTIV(Enum):
     kBinary     = "Binary"
     kBipolar    = "Bipolar"
+    kLinear     = "Linear"
+    kReLU       = "ReLU"
 
 class LEARN(Enum):
     kBatch     = "Batch"
     kOnline    = "Online"
 
+class Activation:
+    @staticmethod
+    def function(x: np.ndarray | float, activation: ACTIV) -> np.ndarray | float:
+        if activation == ACTIV.kBinary:
+            return Activation.binary_sigmoid(x)
+        if activation == ACTIV.kBipolar:
+            return Activation.bipolar_sigmoid(x)
+        if activation == ACTIV.kReLU:
+            return Activation.relu(x)
+        if activation == ACTIV.kLinear:
+            return x
+        raise ValueError(f"Unknown activation function: {activation}")
+
+    @staticmethod
+    def derivative(x: np.ndarray | float, activation: ACTIV) -> np.ndarray | float:
+        if activation == ACTIV.kBinary:
+            return Activation.deriv_binary_sigmoid(x)
+        if activation == ACTIV.kBipolar:
+            return Activation.deriv_bipolar_sigmoid(x)
+        if activation == ACTIV.kReLU:
+            return Activation.deriv_relu(x)
+        if activation == ACTIV.kLinear:
+            return 1
+        raise ValueError(f"Unknown activation function: {activation}")
+
+    @staticmethod
+    def bipolar_sigmoid(x: np.ndarray | float) -> np.ndarray | float:
+        return 2 / (1 + np.exp(-x)) - 1
+
+    @staticmethod
+    def deriv_bipolar_sigmoid(x: np.ndarray | float) -> np.ndarray | float:
+        return 0.5 * (1 - (Activation.bipolar_sigmoid(x) ** 2))
+
+    @staticmethod
+    def binary_sigmoid(x: np.ndarray | float) -> np.ndarray | float:
+        return 1 / (1 + np.exp(-x))
+
+    @staticmethod
+    def deriv_binary_sigmoid(x: np.ndarray | float) -> np.ndarray | float:
+        return Activation.binary_sigmoid(x) * (1 - Activation.binary_sigmoid(x))
+
+    @staticmethod
+    def relu(x: np.ndarray | float) -> np.ndarray | float:
+        conditions = [x <= 0,x > 0] #define conditions
+        functions = [ #define corresponding functions (or constants)
+            0,  #constant: 0 when x <= 0
+            lambda x: x,  #function: x when 1 < x
+        ]
+        return np.piecewise(x, conditions, functions)
+
+    @staticmethod
+    def deriv_relu(x: np.ndarray | float) -> np.ndarray | float:
+        conditions = [x <= 0, x > 0]  # define conditions
+        functions = [  # define corresponding functions (or constants)
+            0,  #constant: 0 when x <= 0
+            1,  #function: 1 when 1 < x
+        ]
+        return np.piecewise(x, conditions, functions)
+
+
 class BaseInterface(ABC):
-    class Activation:
-        def __init__(self, activation: ACTIV = ACTIV.kBinary):
-            self.activation = activation
-
-        def function(self, x: np.ndarray) -> float:
-            if self.activation == ACTIV.kBinary:
-                return self.binary_sigmoid(x)
-            elif self.activation == ACTIV.kBipolar:
-                return self.bipolar_sigmoid(x)
-            else:
-                raise ValueError(f"Unknown activation function: {self.activation}")
-
-        def derivative(self, x) -> float:
-            if self.activation == ACTIV.kBinary:
-                return self.deriv_binary_sigmoid(x)
-            elif self.activation == ACTIV.kBipolar:
-                return self.deriv_bipolar_sigmoid(x)
-            else:
-                raise ValueError(f"Unknown activation function: {self.activation}")
-
-        def bipolar_sigmoid(self, x: np.ndarray | float) -> np.ndarray | float:
-            return 2 / (1 + np.exp(-x)) - 1
-
-        def deriv_bipolar_sigmoid(self, x: np.ndarray | float) -> np.ndarray | float:
-            return 0.5 * (1 - (self.bipolar_sigmoid(x) ** 2))
-
-        def binary_sigmoid(self, x: np.ndarray | float) -> np.ndarray | float:
-            return 1 / (1 + np.exp(-x))
-
-        def deriv_binary_sigmoid(self, x: np.ndarray | float) -> np.ndarray | float:
-            return self.binary_sigmoid(x) * (1 - self.binary_sigmoid(x))
-
 
     @abstractmethod
     def __init__(self):

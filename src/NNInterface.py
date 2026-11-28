@@ -1,8 +1,20 @@
-from BaseInterface import BaseInterface, ACTIV, LEARN
+from BaseInterface import BaseInterface, Activation, ACTIV, LEARN
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import numpy as np
-import math
 import yaml
+
+@dataclass(frozen=True)
+class Layer: # a NN Layer
+    neurons: int # number of neurons in the layer
+    activation: ACTIV
+
+    def __post_init__(self): # CHATGPT suggested this check
+        if (isinstance(self.neurons, bool)
+                or not isinstance(self.neurons, (int, np.integer)) or self.neurons < 1):
+            raise ValueError("Layer neurons must be a positive integer")
+        if not isinstance(self.activation, ACTIV):
+            raise ValueError("Layer activation must be an ACTIV value")
 
 class NNInterface(BaseInterface):
     def __init__(self):
@@ -12,7 +24,7 @@ class NNInterface(BaseInterface):
         self._layerSizes: list[int]
         self._outputs: np.ndarray
 
-        self.activation: BaseInterface.Activation
+        self.activations: list[ACTIV] # one per hidden layer, followed by output
 
         self.inputs:        np.ndarray
         self.outputs:       np.ndarray
@@ -22,13 +34,14 @@ class NNInterface(BaseInterface):
         self.weights:   list[np.ndarray]
         self.weightedSum: list[float]
 
-    def loadTrainingSet(self) -> None:
-        if self.activation.activation == ACTIV.kBinary:
+    def loadTrainingSet(self, activation: ACTIV | None = None) -> None:
+        activation = self.activations[-1] if activation is None else activation
+        if activation == ACTIV.kBinary:
             filename = "BinaryTrainingSet.yaml"
-        elif self.activation.activation == ACTIV.kBipolar:
+        elif activation == ACTIV.kBipolar:
             filename = "BipolarTrainingSet.yaml"
         else:
-            raise ValueError(f"Unknown activation function: {self.activation.activation}")
+            raise ValueError("Choose Binary or Bipolar trainingActivation for the XOR dataset")
 
         with open(filename, encoding="utf-8") as file:
             data = yaml.safe_load(file)
@@ -44,6 +57,7 @@ class NNInterface(BaseInterface):
     def saveWeights(self, filename: str = "weights.npz") -> None:
         data = {
             "layerSizes": np.asarray(self._layerSizes, dtype=int),
+            "activations": np.asarray([activation.value for activation in self.activations]),
             **{
                 f"weight_{i}": weights
                 for i, weights in enumerate(self.weights)
@@ -63,6 +77,11 @@ class NNInterface(BaseInterface):
                     f"Saved architecture {saved_sizes} does not match "
                     f"this network's architecture {self._layerSizes}"
                 )
+
+            if "activations" in data:
+                saved_activations = data["activations"].tolist()
+                if saved_activations != [activation.value for activation in self.activations]:
+                    raise ValueError("Saved activations do not match this network's activations")
 
             loaded_weights = []
 
@@ -85,7 +104,7 @@ class NNInterface(BaseInterface):
 
         # Replace existing weights only after all matrices pass validation.
         self.weights = loaded_weights
-        self.previousUpdates = [np.zeros_like(w) for w in self.weights]
+        self._lastWeights = [w.copy() for w in self.weights]
 
     @abstractmethod
     def initWeights(self, initialWeightRange) -> None:
@@ -96,28 +115,36 @@ class NNInterface(BaseInterface):
         pass
 
 class NeuralNetwork(NNInterface):
-    def __init__(self, inputs: int = 2, hiddenNodes: list[int] | None = [4, 4], outputs: int = 1,
+    def __init__(self, inputs: int = 2, hiddenNodes: list[Layer] | None = None, outputs: int = 1,
                  learningRate: float = 0.2, momentum: float = 0.0,
                  activFunc: ACTIV = ACTIV.kBinary, learnMode: LEARN = LEARN.kOnline, initialWeightRange: tuple[float, float] = (-0.5, 0.5), maxEpoch: int = 10000):
         super().__init__()
 
-        if inputs < 2 or outputs < 1 or hiddenNodes is None or len(hiddenNodes) < 1:
+        if hiddenNodes is None:
+            hiddenNodes = [Layer(neurons=4, activation=ACTIV.kBinary)]
+        if inputs < 2 or outputs < 1 or len(hiddenNodes) < 1:
             raise ValueError(f"inputs ({inputs}), outputs ({outputs}), and hiddenNodes ({hiddenNodes}) must be positive")
+        if not all(isinstance(layer, Layer) for layer in hiddenNodes):
+            raise TypeError("hiddenNodes must contain Layer instances")
+        if not isinstance(activFunc, ACTIV):
+            raise ValueError("activFunc must be an ACTIV value for the output layer")
 
         self.learningRate = learningRate
         self.momentum = momentum
-        self.activation = NNInterface.Activation(activation=activFunc)
         self.learningMode = learnMode
         self.rng = np.random.default_rng(4)
         self._errorThresh = 0.05
         self._maxEpoch = maxEpoch
 
-        self._layerSizes = [inputs, *hiddenNodes, outputs]
+        hiddenNeurons = [node.neurons for node in hiddenNodes]
+
+        self._layerSizes = [inputs, *hiddenNeurons, outputs]
         self._outputs = np.array([])
         self._lastWeights: list[np.ndarray]
 
         self.inputs = np.zeros(inputs)
-        self.nodes = [np.zeros(n) for n in hiddenNodes]
+        self.nodes = [np.zeros(n) for n in hiddenNeurons]
+        self.activations = [node.activation for node in hiddenNodes] + [activFunc]
         self.output = np.zeros(outputs)
 
         # Example: [2, 4, 4, 1] means input -> hidden -> hidden -> output.
@@ -143,40 +170,29 @@ class NeuralNetwork(NNInterface):
         for update in self._lastWeights:
             update.fill(0.0)
 
-    def fwdProp(self) -> float:
-        output: float = 0.0
+    def fwdProp(self) -> np.ndarray:
         self.weightedSums = []
-
-        for index, layer in enumerate(self.weights):
-            if index == len(self.weights) - 1:
-                self.weightedSums.append(np.matmul(layer.T, np.append(self.nodes[index - 1], 1)))
-                output: float = self.activation.function(self.weightedSums[-1])
-                break
-
-            if index == 0:
-                self.weightedSums.append(np.matmul(layer.T, np.append(self.inputs, 1)))
-                self.nodes[index] = self.activation.function(self.weightedSums[-1])
-            else:
-                self.weightedSums.append(np.matmul(layer.T, (np.append(self.nodes[index - 1], 1))))
-                self.nodes[index] = self.activation.function(self.weightedSums[-1])
-
-        return output
-        # if len(self._outputs) > 1:
-        #     self._outputs = np.append(self._outputs, output)
-        # else:
-        #     self._outputs = np.array([self.output])
+        output = self.inputs
+        for index, weights in enumerate(self.weights):
+            self.weightedSums.append(weights.T @ np.append(output, 1.0))
+            output = Activation.function(self.weightedSums[-1], self.activations[index])
+            if index < len(self.nodes):
+                self.nodes[index] = output
+        self.output = output
+        return self.output
 
     def halfTotalSquareError(self):
         error = np.subtract(self._outputs.ravel(), self.expectedOutputs.ravel()).T # vector subtraction
         return 0.5 * np.dot(error,error)
 
-    def backProp(self, target: float) -> list[np.ndarray]:
+    def backProp(self, target: float | np.ndarray) -> list[np.ndarray]:
         # deltas[i] belongs to the neurons reached by self.weights[i].
         # there should be deltas for each node + the output node
         deltas = [None] * len(self.weights)
 
         # Output layer: (target - output) * activation derivative
-        deltas[-1] = ((target - self._outputs[-1]) * self.activation.derivative(self.weightedSums[-1]))
+        deltas[-1] = ((np.asarray(target) - self.output)
+                      * Activation.derivative(self.weightedSums[-1], self.activations[-1]))
 
         # Hidden layers in reverse order.
         for layer in range(len(self.weights) - 2, -1, -1):
@@ -188,7 +204,7 @@ class NeuralNetwork(NNInterface):
             weighted_error = w @ delta
 
             # calculate the delta for the next row
-            deltas[layer] = weighted_error * self.activation.derivative(self.weightedSums[layer])
+            deltas[layer] = weighted_error * Activation.derivative(self.weightedSums[layer], self.activations[layer])
 
         # Now that every delta uses the original weights, update the weights.
         changes : list[np.ndarray] = []
@@ -202,19 +218,19 @@ class NeuralNetwork(NNInterface):
         # return changes to be applied later (depending on online or batch mode)
         return changes
 
-    def backPropSequential(self, target: float) -> None:
+    def backPropSequential(self, target: float | np.ndarray) -> None:
         # Reconstruct the current output from the saved forward-pass sum.
-        output = self.activation.function(self.weightedSums[-1])
+        output = Activation.function(self.weightedSums[-1], self.activations[-1])
         target = np.asarray(target, dtype=float).reshape(-1)
 
-        delta = (target - output)* self.activation.derivative(self.weightedSums[-1])
+        delta = (target - output) * Activation.derivative(self.weightedSums[-1], self.activations[-1])
 
         # Update the output layer first, then move toward the input.
         for layer in range(len(self.weights) - 1, -1, -1):
             if layer < len(self.weights) - 1:
                 # The next layer's weights have ALREADY been updated.
                 next_weights = self.weights[layer + 1][:-1, :]
-                delta = (next_weights @ delta) * self.activation.derivative(self.weightedSums[layer])
+                delta = (next_weights @ delta) * Activation.derivative(self.weightedSums[layer], self.activations[layer])
 
             previous_output = self.inputs if layer == 0 else self.nodes[layer - 1]
 
@@ -234,8 +250,8 @@ class NeuralNetwork(NNInterface):
         self._lastWeights[layer] = current.copy()
         current += update
 
-    def trainModel(self, sequentialUpdates: bool = False, plot: bool = True, interactive: bool = False) -> tuple[bool, list[float]]:
-        self.loadTrainingSet()
+    def trainModel(self, sequentialUpdates: bool = False, plot: bool = True, interactive: bool = False, trainingActivation: ACTIV | None = None) -> tuple[bool, list[float]]:
+        self.loadTrainingSet(trainingActivation)
         error: list[float] = []
         success = False
 
@@ -309,7 +325,7 @@ class NeuralNetwork(NNInterface):
 
         return (success, error)
 
-    def avgTrain(self, trials: int = 100, plot: bool = True, seed: int | None = None):
+    def avgTrain(self, trials: int = 100, plot: bool = True, seed: int | None = None, trainingActivation: ACTIV | None = None):
         if trials < 1:
             raise ValueError("trials must be at least 1")
 
@@ -326,7 +342,7 @@ class NeuralNetwork(NNInterface):
             self.rng = np.random.default_rng(trial_seed)
             self.initWeights(self.initialWeightRange)
             seq = (self.learningMode == LEARN.kOnline)
-            success, loss = self.trainModel(sequentialUpdates = seq, plot = False, interactive = False)
+            success, loss = self.trainModel(sequentialUpdates = seq, plot = False, interactive = False, trainingActivation=trainingActivation)
             print(f"Trained model {i}")
             if success:
                 epochs.append(len(loss))
